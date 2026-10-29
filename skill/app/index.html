@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflows</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect x='64' y='64' width='896' height='896' rx='200' fill='%233b5bdb'/%3E%3Cpath d='M300 330h200M300 512h300M300 694h160' stroke='%23fff' stroke-width='56' stroke-linecap='round' fill='none'/%3E%3Cpath d='M640 600l170 94-170 94z' fill='%2351cf66'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --line: #e2e5ea; --text: #1d2330; --muted: #6b7385;
+  --accent: #3b5bdb; --accent-ink: #ffffff; --ok: #2b8a3e; --bad: #c92a2a; --warn: #e67700; --run: #1971c2;
+  --code-bg: #f3f4f7; --sel: #edf2ff;
+  --c-find: #1971c2; --c-debug: #e8590c; --c-test: #7048e8; --c-build: #0c8599; --c-run: #2b8a3e;
+  --c-git: #c2255c; --c-edit: #a07400; --c-note: #868e96; --c-other: #868e96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111318; --panel: #181b22; --panel-2: #1f232c; --line: #2b303b; --text: #e3e6ec; --muted: #8b93a5;
+    --accent: #5c7cfa; --ok: #51cf66; --bad: #ff6b6b; --warn: #ffa94d; --run: #4dabf7;
+    --code-bg: #12151b; --sel: #1e2540;
+    --c-find: #4dabf7; --c-debug: #ff922b; --c-test: #9775fa; --c-build: #3bc9db; --c-run: #51cf66;
+    --c-git: #f06595; --c-edit: #fcc419; --c-note: #868e96; --c-other: #868e96;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .5; cursor: default; }
+input, select, textarea { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12px; width: 100%; }
+
+header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 14px; margin: 0 6px 0 0; letter-spacing: .2px; }
+header .search { flex: 1; max-width: 520px; }
+header .search input { width: 100%; }
+header .store { margin-left: auto; color: var(--muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
+.title .meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.layout { flex: 1; display: flex; min-height: 0; }
+aside { width: 290px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); min-height: 0; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; border: 0; border-radius: 0; background: none; padding: 8px 0; color: var(--muted); border-bottom: 2px solid transparent; }
+.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.list { overflow: auto; flex: 1; }
+.item { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.item:hover { background: var(--panel-2); }
+.item.on { background: var(--sel); }
+.item .t { font-weight: 600; display: flex; gap: 6px; align-items: center; }
+.item .s { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+main { flex: 1; overflow: auto; min-width: 0; display: flex; flex-direction: column; }
+.content { padding: 14px 18px 90px; flex: 1; }
+.title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.title h2 { font-size: 17px; margin: 0; }
+.sub { color: var(--muted); margin-bottom: 12px; }
+.toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+.chip { border-radius: 999px; padding: 2px 9px; font-size: 12px; }
+.chip.on { background: var(--sel); border-color: var(--accent); }
+
+.pill { font-size: 11px; padding: 0 6px; border-radius: 4px; border: 1px solid currentColor; line-height: 16px; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+
+.task { margin: 18px 0 6px; font-weight: 600; color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.note { color: var(--muted); font-style: italic; margin: 4px 0 4px 34px; }
+.step { display: grid; grid-template-columns: 22px 34px 1fr auto; gap: 8px; padding: 8px 6px; border-bottom: 1px solid var(--line); align-items: start; }
+.step.sel { background: var(--sel); }
+.step .n { color: var(--muted); text-align: right; padding-top: 1px; }
+.step .head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.step .desc { font-weight: 600; }
+.step .meta { color: var(--muted); font-size: 11px; }
+.step pre { margin: 6px 0 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; white-space: pre-wrap; word-break: break-word; max-height: 9.5em; overflow: hidden; position: relative; cursor: pointer; }
+.step pre.open { max-height: none; cursor: auto; }
+.step .err { color: var(--bad); font-size: 12px; margin-top: 4px; }
+.step .acts { display: flex; gap: 4px; }
+.step .acts button { padding: 2px 8px; font-size: 12px; }
+.st { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.st.ok { color: var(--ok); } .st.failed { color: var(--bad); } .st.running { color: var(--run); } .st.skipped, .st.idle { color: var(--muted); }
+
+.bar { position: sticky; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 10px 18px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; box-shadow: 0 -4px 12px rgba(0,0,0,.06); }
+.bar input[type=text] { min-width: 180px; }
+
+.console { border: 1px solid var(--line); border-radius: 8px; background: var(--code-bg); margin-top: 14px; }
+.console .ch { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.console pre { margin: 0; padding: 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.console .mark { color: var(--accent); font-weight: 600; }
+.envbox { display: none; margin: 8px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.envbox.open { display: block; }
+.empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.toast { position: fixed; right: 16px; bottom: 16px; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 420px; }
+.toast.show { opacity: .95; }
+@media (max-width: 760px) {
+  .layout { flex-direction: column; }
+  aside { width: 100%; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  header .store { display: none; }
+  .content { padding: 12px 16px 90px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Workflows</h1>
+  <select id="project" title="Project"></select>
+  <div class="search"><input id="q" type="search" placeholder="Search steps in this project (command or description)…"></div>
+  <span class="store mono" id="store" title="__WF_ROOT__"></span>
+</header>
+<div class="layout">
+  <aside>
+    <div class="tabs">
+      <button data-tab="sessions">Sessions</button>
+      <button data-tab="workflows">Workflows</button>
+      <button data-tab="runs">Runs</button>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+  <main id="main"><div class="content"><div class="empty">Loading…</div></div></main>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const TOKEN = "__WF_TOKEN__";
+const HOMEDIR = "__WF_HOMEDIR__";
+// display only: copy buttons and runs always use the real text
+const tilde = (s) => (s || "").split(HOMEDIR + "/").join("~/");
+const CATS = ["find", "debug", "test", "build", "run", "git", "edit", "note", "other"];
+const S = { project: null, tab: "sessions", view: null, sel: new Map(), cats: new Set(), hideFailed: false, run: null, poll: null };
+
+// ---------- helpers
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else if (k === "style") el.style.cssText = v;
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
+  return el;
+}
+const $ = (s) => document.querySelector(s);
+async function get(path, params = {}) {
+  const r = await fetch(path + "?" + new URLSearchParams(params));
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-WF-Token": TOKEN }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3200); }
+const fail = (e) => toast("Error: " + e.message);
+const catPill = (c) => h("span", { class: "pill", style: `color:var(--c-${CATS.includes(c) ? c : "other"})` }, c);
+const fmtTime = (ts) => new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function statusDot(s) { const c = s === "ok" ? "var(--ok)" : s === "FAILED" ? "var(--bad)" : "var(--warn)"; return h("span", { class: "dot", title: s, style: `background:${c}` }); }
+function copy(text) { navigator.clipboard.writeText(text).then(() => toast("Copied")); }
+function setMain(...nodes) { const m = $("#main"); m.replaceChildren(h("div", { class: "content" }, ...nodes)); return m; }
+function remember() { try { localStorage.setItem("wf.ui", JSON.stringify({ project: S.project, tab: S.tab })); } catch (e) {} }
+
+// ---------- sidebar
+async function loadProjects() {
+  const ps = await get("/api/projects");
+  const sel = $("#project");
+  sel.replaceChildren(...ps.map((p) => h("option", { value: p.name }, `${p.name} (${p.sessions})`)));
+  let saved = {}; try { saved = JSON.parse(localStorage.getItem("wf.ui") || "{}"); } catch (e) {}
+  S.project = ps.some((p) => p.name === saved.project) ? saved.project : ps[0]?.name;
+  S.tab = saved.tab || "sessions";
+  if (!S.project) return setMain(h("div", { class: "empty" }, "No recorded projects yet. Sessions appear here after Claude runs a command."));
+  sel.value = S.project;
+  await renderList();
+}
+async function renderList() {
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
+  const list = $("#list");
+  try {
+    if (S.tab === "sessions") {
+      const ss = await get("/api/sessions", { project: S.project });
+      list.replaceChildren(...ss.map((s) => h("div", { class: "item" + (S.view?.kind === "session" && S.view.n === s.n ? " on" : ""), onclick: () => openSession(s.n) },
+        h("div", { class: "t" }, `#${String(s.n).padStart(4, "0")}`, h("span", { class: "s" }, s.branch || "")),
+        h("div", { class: "s" }, `${s.started.replace("T", " ")} · ${s.steps} steps${s.failed ? ` · ${s.failed} failed` : ""}`),
+        s.tasks.length ? h("div", { class: "s" }, s.tasks.join(" · ")) : null)));
+      if (!S.view && ss[0]) openSession(ss[0].n);
+    } else if (S.tab === "workflows") {
+      const ws = await get("/api/workflows", { project: S.project });
+      list.replaceChildren(...(ws.length ? ws.map((w) => h("div", { class: "item" + (S.view?.kind === "workflow" && S.view.name === w.name ? " on" : ""), onclick: () => openWorkflow(w.name) },
+        h("div", { class: "t" }, w.name), h("div", { class: "s" }, `${w.steps} steps · ${w.description}`)))
+        : [h("div", { class: "item s" }, "No workflows yet — select steps in a session and click Create workflow.")]));
+    } else {
+      const rs = await get("/api/runs", { project: S.project });
+      list.replaceChildren(...(rs.length ? rs.map((r) => h("div", { class: "item" + (S.view?.kind === "log" && S.view.file === r.file ? " on" : ""), onclick: () => openLog(r) },
+        h("div", { class: "t" }, r.live ? h("span", { class: "st running" }, "live") : r.rc == null ? null : h("span", { class: "st " + (r.rc === 0 ? "ok" : "failed") }, r.rc === 0 ? "ok" : `exit ${r.rc}`), r.file.replace(/\.log$/, "")),
+        h("div", { class: "s" }, fmtTime(r.modified)))) : [h("div", { class: "item s" }, "No runs yet.")]));
+    }
+  } catch (e) { fail(e); }
+}
+
+// ---------- step rows (sessions + search)
+function selectionBar() {
+  const n = S.sel.size;
+  if (!n) return null;
+  const name = h("input", { type: "text", placeholder: "workflow-name" });
+  const desc = h("input", { type: "text", placeholder: "What it does (optional)", style: "flex:1" });
+  const failed = h("input", { type: "checkbox" });
+  const create = async () => {
+    const bySession = new Map();
+    for (const { session, step } of S.sel.values()) (bySession.get(session) || bySession.set(session, []).get(session)).push(step);
+    const sources = [...bySession].sort((a, b) => a[0] - b[0]).map(([s, steps]) => `${s}:${steps.sort((a, b) => a - b).join(",")}`);
+    try {
+      await post("/api/extract", { project: S.project, name: name.value.trim(), description: desc.value.trim(), sources, include_failed: failed.checked, keep_dupes: true });
+      S.sel.clear(); S.tab = "workflows"; remember(); await renderList(); openWorkflow(name.value.trim()); toast("Workflow created");
+    } catch (e) { fail(e); }
+  };
+  return h("div", { class: "bar" }, h("b", {}, `${n} step${n > 1 ? "s" : ""} selected`), name, desc,
+    h("label", {}, failed, " include failed"), h("button", { class: "primary", onclick: create }, "Create workflow"),
+    h("button", { onclick: () => { S.sel.clear(); rerender(); } }, "Clear"));
+}
+function stepRow(e, session) {
+  const key = `${session}:${e.step}`;
+  const cb = h("input", { type: "checkbox", checked: S.sel.has(key), onchange: () => { cb.checked ? S.sel.set(key, { session, step: e.step }) : S.sel.delete(key); rerender(); } });
+  const pre = h("pre", { onclick: () => pre.classList.add("open") }, tilde(e.command));
+  return h("div", { class: "step" + (S.sel.has(key) ? " sel" : "") }, cb, h("div", { class: "n" }, e.step),
+    h("div", {},
+      h("div", { class: "head" }, statusDot(e.status), catPill(e.category), h("span", { class: "desc" }, tilde(e.description) || "(no description)"),
+        h("span", { class: "meta" }, [e.tool && e.tool !== "Bash" ? e.tool : null, session !== S.view?.n ? `#${session}` : null, e.ts?.slice(11)].filter(Boolean).join(" · "))),
+      pre, e.error ? h("div", { class: "err" }, "! " + e.error) : null),
+    h("div", { class: "acts" }, h("button", { title: "Copy command", onclick: () => copy(e.command) }, "Copy")));
+}
+function filterBar(events) {
+  const counts = {};
+  events.filter((e) => e.type === "cmd").forEach((e) => counts[e.category] = (counts[e.category] || 0) + 1);
+  return h("div", { class: "toolbar" },
+    ...Object.keys(counts).sort().map((c) => h("button", { class: "chip" + (S.cats.has(c) ? " on" : ""), onclick: () => { S.cats.has(c) ? S.cats.delete(c) : S.cats.add(c); rerender(); } }, catPill(c), ` ${counts[c]}`)),
+    h("label", { style: "margin-left:8px" }, h("input", { type: "checkbox", checked: S.hideFailed, onchange: (ev) => { S.hideFailed = ev.target.checked; rerender(); } }), " hide failed"),
+    h("button", { style: "margin-left:auto", onclick: () => { visible(events).forEach((e) => S.sel.set(`${e.session ?? S.view.n}:${e.step}`, { session: e.session ?? S.view.n, step: e.step })); rerender(); } }, "Select visible"));
+}
+const visible = (events) => events.filter((e) => e.type === "cmd" && (!S.cats.size || S.cats.has(e.category)) && (!S.hideFailed || e.status === "ok"));
+
+async function openSession(n) {
+  stopPoll(); S.view = { kind: "session", n, events: await get("/api/session", { project: S.project, n }).catch((e) => (fail(e), [])) };
+  rerender(); renderList();
+}
+function renderSession() {
+  const { n, events } = S.view;
+  const cmds = events.filter((e) => e.type === "cmd");
+  const rows = [];
+  for (const e of events) {
+    if (e.type === "mark") rows.push(h("div", { class: "task" }, `Task ${e.task}: ${e.title}`));
+    else if (e.type === "note") rows.push(h("div", { class: "note" }, "Note: " + e.text));
+    else if (visible([e]).length) rows.push(stepRow(e, n));
+  }
+  const m = setMain(h("div", { class: "title" }, h("h2", {}, `Session #${String(n).padStart(4, "0")}`)),
+    h("div", { class: "sub" }, `${cmds.length} steps · ${tilde(cmds[0]?.cwd)}`), filterBar(events), ...(rows.length ? rows : [h("div", { class: "empty" }, "No steps match the filters.")]));
+  const bar = selectionBar(); if (bar) m.append(bar);
+}
+async function runSearch(q) {
+  if (!q) return S.view?.kind === "search" ? openSession((await get("/api/sessions", { project: S.project }))[0]?.n) : null;
+  stopPoll(); S.view = { kind: "search", q, events: await get("/api/search", { project: S.project, q }).catch((e) => (fail(e), [])) };
+  rerender();
+}
+function renderSearch() {
+  const { q, events } = S.view;
+  const rows = visible(events).map((e) => stepRow(e, e.session));
+  const m = setMain(h("div", { class: "title" }, h("h2", {}, `Search: “${q}”`)), h("div", { class: "sub" }, `${events.length} matching steps across sessions — select from several sessions to combine them into one workflow.`),
+    filterBar(events), ...(rows.length ? rows : [h("div", { class: "empty" }, "No matches.")]));
+  const bar = selectionBar(); if (bar) m.append(bar);
+}
+
+// ---------- workflows + runner
+async function openWorkflow(name) {
+  stopPoll();
+  try { S.view = { kind: "workflow", name, wf: await get("/api/workflow", { project: S.project, name }), checked: new Set(), state: {}, editing: false, lines: [] }; }
+  catch (e) { return fail(e); }
+  rerender(); renderList();
+}
+function renderWorkflow() {
+  const v = S.view, w = v.wf;
+  const running = S.run && S.run.running && S.run.name === v.name;
+  if (v.editing) {
+    const ta = h("textarea", { rows: 32, spellcheck: "false" }, w.script);
+    return setMain(h("div", { class: "title" }, h("h2", {}, `Edit ${v.name}`)), h("div", { class: "sub mono" }, w.path),
+      h("div", { class: "toolbar" }, h("button", { class: "primary", onclick: async () => { try { await post("/api/workflow/save", { project: S.project, name: v.name, script: ta.value }); toast("Saved"); openWorkflow(v.name); } catch (e) { fail(e); } } }, "Save"),
+        h("button", { onclick: () => { v.editing = false; rerender(); } }, "Cancel"),
+        h("span", { class: "meta" }, "Steps are blocks starting with “# ── N. title”. A leading “cd …” line sets that step's directory.")), ta);
+  }
+  const envOpen = v.envOpen;
+  const envTa = h("textarea", { rows: 3, placeholder: "KEY=value (one per line) — passed to the run", oninput: (e) => v.env = e.target.value }, v.env || "");
+  const inherit = h("input", { type: "checkbox", checked: !!v.inherit, onchange: (e) => v.inherit = e.target.checked });
+  const desc = w.script.split("\n")[2]?.replace(/^#\s*/, "") || "";
+  const redacted = w.script.includes("<REDACTED>");
+  const rows = w.steps.map((s) => {
+    const st = v.state[s.n] || "idle";
+    const cb = h("input", { type: "checkbox", checked: v.checked.has(s.n), onchange: () => { cb.checked ? v.checked.add(s.n) : v.checked.delete(s.n); rerender(); } });
+    const m = s.title.match(/^\[(\w+)\]\s*(.*?)(\s+\(from #(\d+) step (\d+)\))?$/);
+    const pre = h("pre", { onclick: () => pre.classList.add("open") }, tilde(s.body));
+    return h("div", { class: "step" + (v.checked.has(s.n) ? " sel" : "") }, cb, h("div", { class: "n" }, s.n),
+      h("div", {}, h("div", { class: "head" }, m ? catPill(m[1]) : null, h("span", { class: "desc" }, tilde(m ? m[2] : s.title)),
+        h("span", { class: "st " + st }, st), h("span", { class: "meta" }, [tilde(s.cwd), m && m[4] ? `from #${m[4]}:${m[5]}` : null].filter(Boolean).join(" · "))), pre),
+      h("div", { class: "acts" }, h("button", { disabled: running, title: "Run only this step (in its recorded directory)", onclick: () => startRun([s.n]) }, "▶ Run"),
+        h("button", { title: "Copy", onclick: () => copy((s.cwd ? `cd ${s.cwd}\n` : "") + s.body) }, "Copy")));
+  });
+  setMain(h("div", { class: "title" }, h("h2", {}, v.name), h("span", { class: "meta mono" }, tilde(w.path))),
+    h("div", { class: "sub" }, desc),
+    redacted ? h("div", { class: "err", style: "margin-bottom:8px" }, "Contains <REDACTED> values — click Edit and replace them (e.g. with \"$MY_TOKEN\" + set it under Environment) before running those steps.") : null,
+    h("div", { class: "toolbar" },
+      h("button", { class: "primary", disabled: running, onclick: () => startRun(null) }, "▶ Run all"),
+      h("button", { disabled: running || !v.checked.size, onclick: () => startRun([...v.checked].sort((a, b) => a - b)) }, `▶ Run selected (${v.checked.size})`),
+      running ? h("button", { class: "danger", onclick: () => post("/api/run/stop", { id: S.run.id }).catch(fail) }, "■ Stop") : null,
+      h("button", { onclick: () => { v.checked = v.checked.size === w.steps.length ? new Set() : new Set(w.steps.map((s) => s.n)); rerender(); } }, v.checked.size === w.steps.length ? "Select none" : "Select all"),
+      h("button", { onclick: () => { v.envOpen = !v.envOpen; rerender(); } }, "Environment"),
+      h("button", { onclick: () => { v.editing = true; rerender(); } }, "Edit"),
+      h("button", { onclick: () => copy(w.script) }, "Copy script")),
+    h("div", { class: "envbox" + (envOpen ? " open" : "") },
+      h("div", { class: "meta", style: "margin-bottom:6px" }, "Runs use a clean bash (no profile/rc) with HOME, PATH, USER, TERM, LANG, JAVA_HOME, ANDROID_HOME. Add variables here:"),
+      envTa, h("label", {}, inherit, " inherit the app's full environment")),
+    ...rows, consoleBox());
+}
+function consoleBox() {
+  const r = S.run;
+  if (!r || r.name !== S.view.name) return null;
+  const pre = h("pre", { id: "out" });
+  for (const line of S.view.lines) {
+    const m = line.match(/^::wf-step (\d+)$/);
+    pre.append(m ? h("span", { class: "mark" }, `── step ${m[1]} ──\n`) : line + "\n");
+  }
+  const status = r.running ? h("span", { class: "st running" }, "running") : h("span", { class: "st " + (r.rc === 0 ? "ok" : "failed") }, r.rc === 0 ? "finished ok" : `failed (exit ${r.rc})`);
+  setTimeout(() => { const o = $("#out"); if (o) o.scrollTop = o.scrollHeight; });
+  return h("div", { class: "console" }, h("div", { class: "ch" }, h("b", {}, "Output"), status, h("span", { class: "meta mono", style: "margin-left:auto" }, r.log)), pre);
+}
+async function startRun(steps) {
+  const v = S.view;
+  try {
+    const r = await post("/api/run", { project: S.project, name: v.name, steps, env: v.env || "", inherit_env: !!v.inherit });
+    S.run = { ...r, since: 0 }; v.lines = []; v.state = {};
+    for (const s of r.steps) v.state[s.n] = "pending";
+    rerender(); poll();
+  } catch (e) { fail(e); }
+}
+function stopPoll() { clearTimeout(S.poll); S.poll = null; }
+async function poll() {
+  stopPoll();
+  const r = S.run; if (!r) return;
+  try {
+    const d = await get("/api/run", { id: r.id, since: r.since });
+    Object.assign(r, d, { since: d.next });
+    if (S.view?.kind === "workflow" && S.view.name === r.name) {
+      const v = S.view;
+      for (const line of d.lines) {
+        v.lines.push(line);
+        const m = line.match(/^::wf-step (\d+)$/);
+        if (m) { for (const k in v.state) if (v.state[k] === "running") v.state[k] = "ok"; v.state[m[1]] = "running"; }
+      }
+      if (!d.running) for (const k in v.state) v.state[k] = v.state[k] === "running" ? (d.rc === 0 ? "ok" : "failed") : v.state[k] === "pending" ? "skipped" : v.state[k];
+      if (d.lines.length || !d.running) rerender();
+    } else if (S.view?.kind === "log" && S.view.live === r.id) {
+      S.view.text += d.lines.map((l) => l + "\n").join(""); rerender();
+    }
+    if (d.running) S.poll = setTimeout(poll, 400); else { toast(`${r.name}: ${d.rc === 0 ? "finished ok" : "failed, exit " + d.rc}`); if (S.tab === "runs") renderList(); }
+  } catch (e) { fail(e); }
+}
+
+// ---------- run logs
+async function openLog(r) {
+  stopPoll();
+  try {
+    const d = await get("/api/runlog", { project: S.project, file: r.file });
+    S.view = { kind: "log", file: r.file, text: d.text, live: r.live };
+    if (r.live && S.run?.id === r.live) { S.view.text = ""; S.run.since = 0; poll(); }
+    rerender(); renderList();
+  } catch (e) { fail(e); }
+}
+function renderLog() {
+  const v = S.view;
+  const name = v.file.replace(/-\d{8}-\d{6}.*$/, "");
+  const pre = h("pre", { id: "out" });
+  for (const line of v.text.split("\n")) {
+    const m = line.match(/^::wf-(step|exit) (-?\d+)$/);
+    pre.append(m ? h("span", { class: "mark" }, m[1] === "step" ? `── step ${m[2]} ──\n` : `── exit ${m[2]} ──\n`) : line + "\n");
+  }
+  setMain(h("div", { class: "title" }, h("h2", {}, v.file)),
+    h("div", { class: "toolbar" }, h("button", { onclick: () => { S.tab = "workflows"; remember(); renderList(); openWorkflow(name); } }, `Open workflow ${name}`), h("button", { onclick: () => copy(v.text) }, "Copy log")),
+    h("div", { class: "console" }, pre));
+}
+
+function rerender() {
+  if (!S.view) return;
+  ({ session: renderSession, search: renderSearch, workflow: renderWorkflow, log: renderLog })[S.view.kind]();
+}
+
+// ---------- wiring
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => { S.tab = b.dataset.tab; remember(); renderList(); }));
+$("#project").addEventListener("change", (e) => { S.project = e.target.value; S.view = null; S.sel.clear(); S.cats.clear(); remember(); renderList(); });
+let qT; $("#q").addEventListener("input", (e) => { clearTimeout(qT); qT = setTimeout(() => runSearch(e.target.value.trim()), 250); });
+$("#store").replaceChildren(h("bdi", { dir: "ltr" }, tilde("__WF_ROOT__")));
+loadProjects().catch(fail);
+</script>
+</body>
+</html>

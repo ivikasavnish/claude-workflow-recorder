@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "workflows": {
+      "description": "recorded Claude session commands and runnable workflows from ~/workflows",
+      "command": "python3",
+      "args": ["~/.claude/skills/workflow-recorder/wf_mcp.py"],
+      "timeout": 60
+    },
+    "chrome-devtools": {
+      "description": "control a Chrome browser: navigate, click, fill, screenshots, console, network, performance",
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "timeout": 300
+    },
+    "postgres-example": {
+      "enabled": false,
+      "description": "read-only SQL against a local postgres",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgres://user:pass@localhost:5432/db"]
+    }
+  }
+}
