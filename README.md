@@ -8,6 +8,47 @@ you regroup the steps into scripts you can rerun on your own, a single step at a
 
 ![Session view](docs/sessions.png)
 
+## Why use it
+
+**Keep the know-how, not just the result.** When Claude gets a flaky build working or tracks down a
+crash, the important part is often the exact sequence of commands. Every session is saved with numbered
+steps, the reason for each step, failures with their error lines, and your notes. "How did we fix
+that last month?" becomes a search, not another long chat.
+
+**Run it again without Claude.** Successful steps turn into a normal bash script. You can rerun the
+whole thing, one step, or any subset, in a clean shell. No tokens, no waiting, no different result
+because the model tried something new this time.
+
+**Debug faster.** Failed steps keep their last error line, and `wf mark` / `wf note` split a session
+into tasks with root-cause notes. Rerunning one step (for example "just the repro") takes one click
+in the app or `wf run <name> --steps 3`.
+
+**Get runbooks for free.** Build, release, device setup and incident checks become versioned scripts
+with a comment on every step, taken from what actually worked. Copy one into your repo and share it
+with the team.
+
+**See everything the agent did.** Every action is recorded, not just shell commands: file reads,
+searches, edits and writes (as exact, replayable changes), web fetches, subagents and MCP calls.
+You can review it all before trusting or repeating it.
+
+**Spend fewer tokens.** Rerunning a saved workflow costs nothing, so Claude doesn't have to work it
+out again. Through MCP, agents can look up past steps and get back only the matches, not whole logs.
+The router shows an agent 4 tools instead of every server's full list.
+
+**Use it with any agent.** The workflows MCP server works with any MCP client (Claude, Codex,
+Cursor, …), so steps recorded in one tool can be found and reused from another.
+
+**Private and simple.** It's all local files under `~/workflows`, kept outside your repos, with
+common secrets redacted. No telemetry, no service and no dependencies beyond Python's standard library.
+
+### Who it's for
+
+- **Solo developers** who want a searchable memory of what worked: Gradle/Xcode builds, emulator and
+  device setup, database migrations, deploys.
+- **Teams** who want runbooks from real sessions instead of wiki pages that go stale.
+- **Agent builders** who want a replayable trace of what an agent did, step by step.
+- **Reviewers and leads** who need to check what an AI assistant changed and ran.
+
 ## What you get
 
 | Piece | What it does |
