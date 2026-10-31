@@ -35,6 +35,13 @@ You can review it all before trusting or repeating it.
 out again. Through MCP, agents can look up past steps and get back only the matches, not whole logs.
 The router shows an agent 4 tools instead of every server's full list.
 
+**Know what's safe to replay.** Every step is flagged if it's dangerous (`rm -rf`, force push, `sudo`,
+`curl | sh`, `terraform destroy`, publishes) or won't rerun cleanly (commits, pushes, appends, one-shot edits).
+Dangerous steps don't run until you approve them. These are heuristics, so still read what you run.
+
+**Reuse it with different inputs.** `--param VERSION=1.2.3` turns a recorded value into `{{VERSION}}`, so one
+recorded release becomes a workflow for the next version, another host, or another checkout.
+
 **Use it with any agent.** The workflows MCP server works with any MCP client (Claude, Codex,
 Cursor, …), so steps recorded in one tool can be found and reused from another.
 
@@ -127,8 +134,15 @@ wf extract release --from 7@2 8:3-9 --exclude-cat find,note -d "Build, test, pac
 wf run release                            # all steps
 wf run release --steps 3                  # one step, in its recorded directory
 wf run release --steps 2-4 -e API_TOKEN="$TOKEN"
+wf inspect release                        # parameters, dangerous and non-repeatable steps
+wf extract release --from 7 -P VERSION=1.2.3 --auto-params   # record values as {{VERSION}}, {{PROJECT_DIR}}
+wf run release -P VERSION=1.3.0 --allow-dangerous            # new value; approve flagged steps
 wf ui                                     # open the app
 ```
+
+Parameter values may use only letters, digits and `. / : @ % + , = ~ - _`, because they are filled in as text
+(which is what lets them work inside quoted heredocs). Secrets belong in `-e`, not parameters. File snapshots
+used for large writes are copied as recorded, so parameters don't apply inside them.
 
 Selectors: `7` (whole session), `7:3-9,12` (steps), `7@2` (task 2), `last`, `all`.
 
@@ -156,7 +170,8 @@ python3 ~/.claude/skills/workflow-recorder/wf_mcp.py     # stdio
   Other `Write`/`Edit` content is stored verbatim so replays are byte-exact — treat `~/workflows` as sensitive.
 - The app binds `127.0.0.1` only, rejects foreign `Host` headers (DNS rebinding) and requires a
   per-launch token on every state-changing request.
-- Running a workflow executes shell commands. Review a workflow before you run it.
+- Running a workflow executes shell commands. Review a workflow before you run it. The dangerous-step check
+  is pattern matching on common commands, not a sandbox: scripts it calls, or commands it doesn't know, aren't caught.
 
 ## Development
 

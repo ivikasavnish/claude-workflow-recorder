@@ -134,7 +134,9 @@ def api_get(path, q):
         if not f.exists():
             raise ValueError("no such workflow")
         text = f.read_text()
-        return {"name": f.stem, "script": text, "steps": wf.parse_workflow(text), "path": str(f)}
+        steps = [{**s, **wf.assess(s["body"])} for s in wf.parse_workflow(text)]
+        return {"name": f.stem, "script": text, "steps": steps, "path": str(f),
+                "params": dict(wf.PARAM_DECL.findall(text))}
     if path == "/api/runs":
         p = pdir_of(g("project"))
         live = {r.log.name: r.id for r in RUNS.values() if r.project == p.name}
@@ -170,6 +172,8 @@ def api_post(path, b):
             args.append("--include-failed")
         if b.get("keep_dupes"):
             args.append("--keep-dupes")
+        for kv in b.get("params") or []:
+            args += ["--param", kv]
         r = subprocess.run(args, capture_output=True, text=True, timeout=30)
         if r.returncode:
             raise ValueError((r.stderr or r.stdout).strip())
@@ -183,7 +187,8 @@ def api_post(path, b):
     if path == "/api/run":
         p = pdir_of(b.get("project"))
         only = set(int(x) for x in b["steps"]) if b.get("steps") else None
-        script, chosen, log = wf.prepare_run(p, checked_name(b.get("name")), only)
+        params = wf.parse_kv(l.strip() for l in (b.get("params") or "").splitlines() if l.strip())
+        script, chosen, log = wf.prepare_run(p, checked_name(b.get("name")), only, params, b.get("allow_dangerous") is True)
         extra = {}
         for line in (b.get("env") or "").splitlines():
             k, sep, v = line.strip().partition("=")

@@ -293,13 +293,19 @@ function renderWorkflow() {
   const inherit = h("input", { type: "checkbox", checked: !!v.inherit, onchange: (e) => v.inherit = e.target.checked });
   const desc = w.script.split("\n")[2]?.replace(/^#\s*/, "") || "";
   const redacted = w.script.includes("<REDACTED>");
+  const paramNames = Object.keys(w.params || {});
+  const dangerSteps = w.steps.filter((s) => s.danger?.length);
+  const allow = h("input", { type: "checkbox", checked: !!v.allowDanger, onchange: (e) => v.allowDanger = e.target.checked });
+  const paramTa = h("textarea", { rows: Math.max(paramNames.length, 1), placeholder: paramNames.map((k) => `${k}=${w.params[k]}`).join("\n"), oninput: (e) => v.params = e.target.value }, v.params || "");
   const rows = w.steps.map((s) => {
     const st = v.state[s.n] || "idle";
     const cb = h("input", { type: "checkbox", checked: v.checked.has(s.n), onchange: () => { cb.checked ? v.checked.add(s.n) : v.checked.delete(s.n); rerender(); } });
     const m = s.title.match(/^\[(\w+)\]\s*(.*?)(\s+\(from #(\d+) step (\d+)\))?$/);
     const pre = h("pre", { onclick: () => pre.classList.add("open") }, tilde(s.body));
+    const riskPills = [s.danger?.length ? h("span", { class: "st failed", title: s.danger.join("; ") }, "dangerous") : null,
+      s.once?.length ? h("span", { class: "st", title: s.once.join("; ") }, "once") : null];
     return h("div", { class: "step" + (v.checked.has(s.n) ? " sel" : "") }, cb, h("div", { class: "n" }, s.n),
-      h("div", {}, h("div", { class: "head" }, m ? catPill(m[1]) : null, h("span", { class: "desc" }, tilde(m ? m[2] : s.title)),
+      h("div", {}, h("div", { class: "head" }, m ? catPill(m[1]) : null, ...riskPills, h("span", { class: "desc" }, tilde(m ? m[2] : s.title)),
         h("span", { class: "st " + st }, st), h("span", { class: "meta" }, [tilde(s.cwd), m && m[4] ? `from #${m[4]}:${m[5]}` : null].filter(Boolean).join(" · "))), pre),
       h("div", { class: "acts" }, h("button", { disabled: running, title: "Run only this step (in its recorded directory)", onclick: () => startRun([s.n]) }, "▶ Run"),
         h("button", { title: "Copy", onclick: () => copy((s.cwd ? `cd ${s.cwd}\n` : "") + s.body) }, "Copy")));
@@ -307,6 +313,8 @@ function renderWorkflow() {
   setMain(h("div", { class: "title" }, h("h2", {}, v.name), h("span", { class: "meta mono" }, tilde(w.path))),
     h("div", { class: "sub" }, desc),
     redacted ? h("div", { class: "err", style: "margin-bottom:8px" }, "Contains <REDACTED> values — click Edit and replace them (e.g. with \"$MY_TOKEN\" + set it under Environment) before running those steps.") : null,
+    dangerSteps.length ? h("div", { class: "err", style: "margin-bottom:8px" }, `Dangerous steps: ${dangerSteps.map((s) => `${s.n} (${s.danger.join("; ")})`).join(", ")}. `, h("label", {}, allow, " allow on the next run")) : null,
+    paramNames.length ? h("div", { class: "envbox open" }, h("div", { class: "meta", style: "margin-bottom:6px" }, "Parameters (NAME=value, one per line; blank uses the default shown):"), paramTa) : null,
     h("div", { class: "toolbar" },
       h("button", { class: "primary", disabled: running, onclick: () => startRun(null) }, "▶ Run all"),
       h("button", { disabled: running || !v.checked.size, onclick: () => startRun([...v.checked].sort((a, b) => a - b)) }, `▶ Run selected (${v.checked.size})`),
@@ -335,8 +343,8 @@ function consoleBox() {
 async function startRun(steps) {
   const v = S.view;
   try {
-    const r = await post("/api/run", { project: S.project, name: v.name, steps, env: v.env || "", inherit_env: !!v.inherit });
-    S.run = { ...r, since: 0 }; v.lines = []; v.state = {};
+    const r = await post("/api/run", { project: S.project, name: v.name, steps, env: v.env || "", inherit_env: !!v.inherit, params: v.params || "", allow_dangerous: !!v.allowDanger });
+    S.run = { ...r, since: 0 }; v.lines = []; v.state = {}; v.allowDanger = false;
     for (const s of r.steps) v.state[s.n] = "pending";
     rerender(); poll();
   } catch (e) { fail(e); }

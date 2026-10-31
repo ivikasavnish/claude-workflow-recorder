@@ -150,6 +150,118 @@ def redact(s):
     return s
 
 
+# ---------------------------------------------------------------- risk & repeatability
+
+# Heuristics, not a sandbox: they catch common shapes so a human looks before replaying.
+DANGER_RULES = [
+    ("recursive delete", r"\brm\s+(-\S+\s+)*(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b|\bfind\b.*\s-delete\b|\bxargs\s+(-\S+\s+)*rm\b"),
+    ("discards git work", r"\bgit\s+reset\b.*--hard|\bgit\s+clean\b.*\s-[a-zA-Z]*f[a-zA-Z]*\b|\bgit\s+checkout\s+(--\s+)?\.(\s|$)|\bgit\s+branch\s+-D\b|\bgit\s+filter-branch\b"),
+    ("rewrites or deletes remote git history", r"\bgit\s+push\b[^;&|\n]*(\s--force|\s-[a-zA-Z]*f[a-zA-Z]*\b|\s--delete\b|\s\+\S)"),
+    ("runs as root", r"\bsudo\b"),
+    ("pipes remote code into a shell", r"\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(ba|z)?sh\b"),
+    ("writes raw disk or formats", r"\bdd\b[^\n]*\bof=|\bmkfs\b|>\s*/dev/(sd|nvme|disk)"),
+    ("world-writable or recursive ownership change", r"\bchmod\b[^\n]*\b777\b|\bchown\s+-R\b"),
+    ("stops the machine", r"\b(shutdown|reboot|halt)\b"),
+    ("changes infrastructure", r"\bterraform\s+(apply|destroy)\b|\bkubectl\s+(apply|delete|drain|replace)\b|\bhelm\s+(install|upgrade|uninstall|delete)\b|\baws\b[^\n]*\s(rm|delete\S*|terminate\S*)\b|\bgcloud\b[^\n]*\sdelete\b"),
+    ("removes containers or volumes", r"\bdocker\s+(system|volume|image|container)\s+prune\b|\bdocker(-compose|\s+compose)\s+down\b[^\n]*\s-v\b|\bdocker\s+(rm|rmi)\b"),
+    ("deploys or publishes", r"\b(npm|cargo)\s+publish\b|\btwine\s+upload\b|\bdocker\s+push\b|\bgh\s+(release\s+(create|delete)|repo\s+delete|pr\s+merge)\b|\b(firebase|fly|flyctl)\s+deploy\b|\bvercel\b[^\n]*--prod\b"),
+    ("wipes device app data", r"\badb\b[^\n]*\s(uninstall|pm\s+clear|shell\s+rm)\b"),
+    ("destroys a database", r"\bdropdb\b|\bredis-cli\b[^\n]*\bflush(all|db)\b"),
+]
+SQL_CLIENT = r"\b(psql|mysql|mariadb|sqlite3|sqlcmd|clickhouse-client)\b"
+SQL_DANGER = r"(?i)\b(drop\s+(table|database|schema)|truncate\s+table|delete\s+from\s+\S+\s*(;|['\"]|$))"
+ONCE_RULES = [
+    ("commit, tag or branch already exists on rerun", r"\bgit\s+(commit|tag|init|clone|merge|rebase|cherry-pick|checkout\s+-b|switch\s+-c|branch\s+(?!-))"),
+    ("pushes to a remote", r"\bgit\s+push\b"),
+    ("creates a remote object", r"\bgh\s+(pr|issue|release|repo)\s+create\b"),
+    ("fails if the directory exists", r"\bmkdir\s+(?![^\n;&|]*(-[a-zA-Z]*p[a-zA-Z]*\b|--parents))"),
+    ("appends on every run", r">>"),
+    ("moves its source away", r"(^|[;&|]\s*)mv\s"),
+    ("fails if the link exists", r"\bln\s+-s\s"),
+    ("sends a mutating HTTP request", r"\bcurl\b[^\n]*(\s-X\s*(POST|PUT|PATCH|DELETE)|\s--request\s+(POST|PUT|PATCH|DELETE)|\s(-d|--data\S*)\s)"),
+    ("in-place edit may not reapply", r"\bsed\s+-i\b"),
+    ("named container already exists", r"\bdocker\s+run\b[^\n]*--name\b"),
+    ("bumps the version", r"\bnpm\s+version\b"),
+]
+
+
+def strip_heredocs(cmd):
+    return re.sub(r"(<<-?\s*['\"]?(\w+)['\"]?[^\n]*)\n.*?\n\s*\2[ \t]*(?=\n|$)", r"\1", cmd, flags=re.S)
+
+
+def shell_view(cmd):
+    """The command as the shell acts on it: no heredoc bodies, quoted text or comments, so
+    `git commit -m "rm -rf"` and file contents don't trigger rules. Text handed to a nested
+    shell (`bash -c`, `eval`, `ssh`) stays visible, since it does run."""
+    view = strip_heredocs(cmd)
+    if not re.search(r"\b((ba|z)?sh\s+-\w*c|eval|ssh)\b", view):
+        view = re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", '""', view)
+    return re.sub(r"(^|\s)#[^\n]*", "", view, flags=re.M)
+
+
+def assess(cmd):
+    """-> {"danger": [reasons], "once": [reasons]}: what could hurt, and what won't rerun cleanly."""
+    view = shell_view(cmd)
+    danger = [why for why, rx in DANGER_RULES if re.search(rx, view, re.M)]
+    if re.search(SQL_CLIENT, view) and re.search(SQL_DANGER, cmd, re.M):
+        danger.append("destroys database rows")
+    once = [why for why, rx in ONCE_RULES if re.search(rx, view, re.M)]
+    if "assert old in s, 'wf: edit target not found" in cmd:
+        once.append("edit fails once its target text is replaced")
+    return {"danger": danger, "once": once}
+
+
+def risk_lines(a):
+    return ([f"# ! DANGEROUS: {'; '.join(a['danger'])}"] if a["danger"] else []) + \
+           ([f"# ! NOT REPEATABLE: {'; '.join(a['once'])}"] if a["once"] else [])
+
+
+# ---------------------------------------------------------------- parameters
+
+# {{NAME}} is filled in as text by `wf run`, so it also works inside quoted heredocs, single
+# quotes and the step's directory, where shell expansion would not. That is why values are
+# restricted to characters that can't change how a command parses.
+PARAM_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+PARAM_VALUE = re.compile(r"^[\w./:@%+,=~-]+$")
+PARAM_DECL = re.compile(r"^# param: ([A-Z][A-Z0-9_]*)=(.*)$", re.M)
+
+
+def parse_kv(items):
+    out = {}
+    for kv in items or []:
+        k, sep, v = kv.partition("=")
+        if not sep or not PARAM_NAME.match(k):
+            raise ValueError(f"bad parameter '{kv}' (use UPPER_NAME=value)")
+        if not PARAM_VALUE.match(v):
+            raise ValueError(f"parameter {k}: value may only use letters, digits and . / : @ % + , = ~ - _")
+        out[k] = v
+    return out
+
+
+def parameterize(text, params):
+    """Replace literal values with {{NAME}}, whole tokens only (80 doesn't match inside 8080)."""
+    for k, v in sorted(params.items(), key=lambda kv: -len(kv[1])):
+        text = re.sub(rf"(?<!\w){re.escape(v)}(?![\w-])", lambda _: "{{" + k + "}}", text)
+    return text
+
+
+def render(text, params):
+    return re.sub(r"\{\{([A-Z][A-Z0-9_]*)\}\}", lambda m: params.get(m.group(1), m.group(0)), text)
+
+
+def suggest_params(commands, taken):
+    """Values worth parameterizing, as `NAME=value` hints for `wf extract --param`."""
+    found = {}
+    text = "\n".join(strip_heredocs(c) for c in commands)
+    for name, rx in (("VERSION", r"(?<![\w.])v?\d+\.\d+\.\d+(?![\w.])"),
+                     ("HOST_IP", r"(?<![\w.])(?!127\.|0\.0\.0\.0)\d{1,3}(?:\.\d{1,3}){3}(?![\w.])"),
+                     ("HOST", r"(?<=://)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")):
+        for i, v in enumerate(dict.fromkeys(re.findall(rx, text))):
+            if v not in taken and i < 3:
+                found[f"{name}{i + 1 if i else ''}"] = v
+    return found
+
+
 # ---------------------------------------------------------------- Claude tools -> bash
 
 # Bookkeeping / UI tools that say nothing about how the work was done.
@@ -319,14 +431,16 @@ def hook():
     cmd_r = cmd if raw else redact(cmd)
     err_tail = redact(err.strip().splitlines()[-1][:200]) if err.strip() else ""
 
+    risk = assess(cmd_r)
     event = {"type": "cmd", "step": step, "ts": now(), "task": task, "category": cat, "status": status,
              "cwd": cwd, "description": desc, "command": cmd_r, "tool": ev.get("tool_name"),
-             "background": bool(ti.get("run_in_background")), "error": err_tail}
+             "background": bool(ti.get("run_in_background")), "error": err_tail, **risk}
     text = f"\n# ── step {step} · {now('%H:%M:%S')} · [{cat}] · {status}" + (f" · task {task}" if task else "") + "\n"
     if desc:
         text += f"# {desc}\n"
     if err_tail:
         text += f"# ! {err_tail}\n"
+    text += "".join(l + "\n" for l in risk_lines(risk))
     if cwd != prev_cwd:
         text += f"cd {shlex.quote(cwd)}\n"
     text += cmd_r + "\n"
@@ -380,7 +494,10 @@ def cmd_show(a):
         elif e["type"] == "note":
             print(f"    # note: {e['text']}")
         elif (not cats or e["category"] in cats) and (a.task is None or e["task"] == a.task):
+            risk = assess(e["command"])  # recomputed so older logs get current rules
             flag = "" if e["status"] == "ok" else f" [{e['status']}]"
+            flag += " [DANGEROUS]" if risk["danger"] else ""
+            flag += " [ONCE]" if risk["once"] else ""
             print(f"{e['step']:>4} [{e['category']:<5}]{flag} {e['description'] or '-'}")
             print("       " + e["command"].replace("\n", "\n       "))
 
@@ -446,6 +563,8 @@ def cmd_extract(a):
                     continue
                 if a.grep and not re.search(a.grep, e["command"] + " " + e["description"], re.I):
                     continue
+                if a.safe_only and assess(e["command"])["danger"]:
+                    continue
                 if not a.keep_dupes and e["command"] in seen:
                     continue
                 if e["background"]:
@@ -455,6 +574,21 @@ def cmd_extract(a):
     if not picked:
         sys.exit("wf: nothing matched")
 
+    try:
+        params = parse_kv(a.param)
+    except ValueError as ex:
+        sys.exit(f"wf: {ex}")
+    for k, v in params.items():
+        if redact(f"{k}={v}") != f"{k}={v}":
+            sys.exit(f"wf: {k} looks like a secret and defaults are stored in plain text - pass it at run time with -e")
+        if not any(parameterize(e["command"] + "\n" + e["cwd"], {k: v}) != e["command"] + "\n" + e["cwd"] for _, e in picked):
+            sys.exit(f"wf: --param {k}: value '{v}' not found in the selected steps")
+    if a.auto_params:
+        cwds = [e["cwd"] for _, e in picked]
+        root = str(project_root(max(set(cwds), key=cwds.count)))
+        if PARAM_VALUE.match(root) and "PROJECT_DIR" not in params:
+            params["PROJECT_DIR"] = root
+
     out = pdir / "workflows" / f"{a.name}.sh"
     lines = ["#!/usr/bin/env bash",
              f"# Workflow: {a.name}",
@@ -462,14 +596,22 @@ def cmd_extract(a):
              f"# project: {pdir.name}   created: {now()}",
              f"# sources: {' '.join(a.sources)}" + (f"   categories: {a.cat}" if a.cat else ""),
              "# Run isolated:  wf run " + a.name + "   (or: wf run " + a.name + " --dry-run)",
-             "set -euo pipefail", ""]
-    prev_cwd, redacted = None, False
+             *[f"# param: {k}={v}" for k, v in sorted(params.items())],
+             "set -euo pipefail"]
+    if params:  # {{NAME}} means nothing to bash, so stop before anything runs
+        lines.append(f"echo 'wf: this workflow has parameters; run it with: wf run {a.name} -P NAME=value' >&2; exit 2")
+    lines.append("")
+    prev_cwd, redacted, flagged = None, False, []
     for i, (n, e) in enumerate(picked, 1):
         lines.append(f"# ── {i}. [{e['category']}] {e['description'] or '(no description)'}   (from #{n:04d} step {e['step']})")
         if e["cwd"] != prev_cwd:
-            lines.append(f"cd {shlex.quote(e['cwd'])}")
+            lines.append(f"cd {parameterize(shlex.quote(e['cwd']), params)}")
             prev_cwd = e["cwd"]
-        lines.append(e["command"])
+        risk = assess(e["command"])
+        lines += risk_lines(risk)
+        if risk["danger"] or risk["once"]:
+            flagged.append((i, risk))
+        lines.append(parameterize(e["command"], params))
         lines.append("")
         redacted |= "<REDACTED>" in e["command"]
     if redacted:
@@ -477,6 +619,30 @@ def cmd_extract(a):
     out.write_text("\n".join(lines) + "\n")
     out.chmod(0o755)
     print(f"wrote {out} ({len(picked)} steps)")
+    for k, v in sorted(params.items()):
+        print(f"  param {k} (default {v})")
+    for i, risk in flagged:
+        for l in risk_lines(risk):
+            print(f"  step {i}: {l[4:]}")
+    hints = suggest_params([e["command"] for _, e in picked], set(params.values()))
+    if hints:
+        print("  could parameterize: " + " ".join(f"--param {k}={v}" for k, v in hints.items()))
+
+
+def cmd_inspect(a):
+    pdir = project_dir(name=a.project)
+    wf = pdir / "workflows" / f"{a.name}.sh"
+    if not wf.exists():
+        sys.exit(f"wf: no workflow '{a.name}'")
+    text = wf.read_text()
+    for k, v in PARAM_DECL.findall(text):
+        print(f"param {k} = {v}")
+    for s in parse_workflow(text):
+        risk = assess(s["body"])
+        label = "DANGEROUS" if risk["danger"] else "ONCE" if risk["once"] else "ok"
+        print(f"{s['n']:>4} {label:<9} {s['title']}")
+        for why in risk["danger"] + risk["once"]:
+            print(f"       - {why}")
 
 
 def cmd_workflows(a):
@@ -549,17 +715,32 @@ def build_script(steps, only=None):
     return "\n".join(lines) + "\n"
 
 
-def prepare_run(pdir, name, only=None):
-    """-> (script text, selected steps, log path). Raises ValueError on a bad request."""
+def prepare_run(pdir, name, only=None, params=None, allow_dangerous=False):
+    """-> (script text, selected steps, log path). Raises ValueError on a bad request.
+    Risk is judged on the rendered steps at run time, so editing the script or passing a
+    parameter can't slip a dangerous command past the check."""
     wf = pdir / "workflows" / f"{name}.sh"
     if not wf.exists():
         raise ValueError(f"no workflow '{name}'")
-    steps = parse_workflow(wf.read_text())
+    text = wf.read_text()
+    declared = dict(PARAM_DECL.findall(text))
+    unknown = set(params or {}) - set(declared)
+    if unknown:
+        raise ValueError(f"unknown parameter {', '.join(sorted(unknown))} (declared: {', '.join(sorted(declared)) or 'none'})")
+    values = parse_kv(f"{k}={v}" for k, v in {**declared, **(params or {})}.items())
+    steps = parse_workflow(text)
+    for s in steps:
+        s["body"] = render(s["body"], values)
+        s["cwd"] = render(s["cwd"], values) if s["cwd"] else s["cwd"]
     chosen = [s for s in steps if only is None or s["n"] in only]
     if not chosen:
         raise ValueError("no matching steps")
     if any("<REDACTED>" in s["body"] for s in chosen):
         raise ValueError("selected steps still contain <REDACTED> placeholders - edit the workflow first")
+    risky = [(s["n"], assess(s["body"])["danger"]) for s in chosen]
+    risky = [f"step {n}: {'; '.join(why)}" for n, why in risky if why]
+    if risky and not allow_dangerous:
+        raise ValueError("refusing dangerous steps without explicit approval (--allow-dangerous):\n  " + "\n  ".join(risky))
     (pdir / "runs").mkdir(exist_ok=True)
     tag = "all" if only is None else "steps-" + "_".join(str(s["n"]) for s in chosen)[:40]
     log = pdir / "runs" / f"{name}-{now('%Y%m%d-%H%M%S')}-{tag}.log"
@@ -569,13 +750,17 @@ def prepare_run(pdir, name, only=None):
 def cmd_run(a):
     pdir = project_dir(name=a.project)
     try:
-        script, chosen, log = prepare_run(pdir, a.name, parse_steps(a.steps))
+        script, chosen, log = prepare_run(pdir, a.name, parse_steps(a.steps), parse_kv(a.param),
+                                          a.allow_dangerous or a.dry_run)
     except ValueError as ex:
         sys.exit(f"wf: {ex}")
     if a.dry_run:
         print(script)
         return
     env = isolated_env(dict(kv.partition("=")[::2] for kv in a.env or []), a.inherit_env)
+    for s in chosen:
+        for why in assess(s["body"])["once"]:
+            print(f"wf: warning: step {s['n']} may not rerun cleanly: {why}", file=sys.stderr)
     print(f"running {a.name} steps {','.join(str(s['n']) for s in chosen)} (isolated env, log -> {log})")
     with open(log, "w") as f:
         proc = subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-c", script], env=env,
@@ -628,13 +813,21 @@ def main():
     p.add_argument("-d", "--description")
     p.add_argument("--include-failed", action="store_true")
     p.add_argument("--keep-dupes", action="store_true")
+    p.add_argument("-P", "--param", action="append", metavar="NAME=VALUE",
+                   help="replace VALUE with {{NAME}}; VALUE becomes the default (repeatable)")
+    p.add_argument("--auto-params", action="store_true", help="also turn the project path into {{PROJECT_DIR}}")
+    p.add_argument("--safe-only", action="store_true", help="drop steps flagged dangerous")
     p.set_defaults(fn=cmd_extract)
     sub.add_parser("workflows", help="list extracted workflows").set_defaults(fn=cmd_workflows)
+    p = sub.add_parser("inspect", help="show a workflow's parameters and risky steps")
+    p.add_argument("name"); p.set_defaults(fn=cmd_inspect)
     p = sub.add_parser("run", help="run a workflow in an isolated bash")
     p.add_argument("name"); p.add_argument("--dry-run", action="store_true")
     p.add_argument("-s", "--steps", help="run only these steps, e.g. 3 or 2-5,8 (default: all)")
     p.add_argument("-e", "--env", action="append", metavar="K=V", help="extra env var for the run")
     p.add_argument("--inherit-env", action="store_true", help="pass the full current environment")
+    p.add_argument("-P", "--param", action="append", metavar="NAME=VALUE", help="override a workflow parameter")
+    p.add_argument("--allow-dangerous", action="store_true", help="run steps flagged dangerous")
     p.set_defaults(fn=cmd_run)
     sub.add_parser("ui", help="open the Workflows app (viewer + runner)").set_defaults(fn=cmd_ui)
 

@@ -61,8 +61,15 @@ wf extract test-all  --from all --cat test -d "Every test command ever used"
 wf extract debug-sip --from 7@2 -d "Reproduce SIP call drop + collect logcat"
 
 wf workflows                      # list saved workflows
-wf run <name> [--dry-run] [-e K=V] [--inherit-env]
+wf run <name> [--dry-run] [-e K=V] [--inherit-env] [-P NAME=value] [--allow-dangerous]
+wf inspect <name>                 # parameters, dangerous and non-repeatable steps
 ```
+
+Risk flags: `danger` steps are refused by `wf run` unless `--allow-dangerous` is passed; `once` steps only warn.
+Never pass `--allow-dangerous` on your own: show the user the flagged steps and get their approval first.
+
+Parameters: `wf extract ... --param VERSION=1.2.3 [--auto-params] [--safe-only]` replaces the literal with
+`{{VERSION}}` (default = recorded value). Pass secrets with `-e`, not `--param`.
 
 Categories (auto, by command shape): `find`, `debug`, `test`, `build`, `run`, `git`, `edit`, `note`, `other`.
 Use `--exclude-cat find,note` for a lean runnable workflow; keep `note` to retain the narrative.
@@ -77,8 +84,9 @@ environment (HOME, PATH, USER, TERM, LANG, JAVA_HOME, ANDROID_HOME/SDK_ROOT). Pa
 2. Pick the minimal set that reproduces the result: drop exploratory `find` steps and failed attempts.
 3. `wf extract` with a kebab-case name and a one-line `-d`.
 4. Open the generated file, tighten comments if needed, replace any `<REDACTED>` with `"$VAR"`.
-5. `wf run <name> --dry-run`, then offer to `wf run <name>`.
-6. If the user wants it in the repo, copy it (e.g. `scripts/workflows/<name>.sh`) — don't move it.
+5. Run `wf inspect <name>`; parameterize values that will change (versions, hosts, paths) as `wf extract` suggests.
+6. `wf run <name> --dry-run`, then offer to `wf run <name>`.
+7. If the user wants it in the repo, copy it (e.g. `scripts/workflows/<name>.sh`) — don't move it.
 
 ## MCP access (for Claude and other tools)
 

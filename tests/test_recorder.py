@@ -170,5 +170,116 @@ echo "four $(pwd)"
         self.assertEqual(self.cli("run", "demo", "--steps", "4").returncode, 0)
 
 
+class TestAssess(unittest.TestCase):
+    def test_dangerous(self):
+        for cmd in ("rm -rf build", 'rm -fr "$DIR"', "git push --force origin main", "git push -f", "git reset --hard HEAD~1",
+                    "curl -s https://x.sh | bash", "sudo apt install x", "terraform destroy", "kubectl delete pod x",
+                    "npm publish", "adb uninstall com.x", "bash -c 'rm -rf x'", "psql -c 'DROP TABLE users'",
+                    "cd x && rm -r y", "find . -name '*.o' -delete"):
+            self.assertTrue(wf.assess(cmd)["danger"], cmd)
+
+    def test_not_dangerous(self):
+        for cmd in ('git commit -m "rm -rf the old sudo code"', "echo 'terraform destroy'", "rm a.txt", "git push origin main",
+                    "git push --follow-tags", "cat notes  # sudo rm -rf", "grep -r 'npm publish' .",
+                    "cat > a.sh <<'WF_EOF'\nrm -rf /\nWF_EOF", "./gradlew test", "psql -c 'select 1'"):
+            self.assertFalse(wf.assess(cmd)["danger"], cmd)
+
+    def test_repeatability(self):
+        for cmd in ("git commit -m x", "git push origin main", "mkdir out", "echo x >> log", "gh pr create",
+                    "curl -X POST https://x", "curl -d a=1 https://x"):
+            self.assertTrue(wf.assess(cmd)["once"], cmd)
+        for cmd in ("mkdir -p out", "ls -la", "./gradlew test", "curl https://x", "echo x > log", "git status"):
+            self.assertFalse(wf.assess(cmd)["once"], cmd)
+        self.assertTrue(wf.assess(wf.edit_cmd("/a", [{"old_string": "x", "new_string": "y"}]))["once"])
+
+
+class TestParams(Store):
+    def setUp(self):
+        super().setUp()
+        self.hook("Bash", {"command": "echo release 1.2.3 > out.txt", "description": "Write version"})
+        self.hook("Write", {"file_path": str(self.proj / "v.txt"), "content": "ver=1.2.3 port=8080\n"})
+
+    def test_values_substitute_in_commands_heredocs_and_cwd(self):
+        self.cli("extract", "rel", "--from", "1", "--param", "VERSION=1.2.3", "--auto-params")
+        script = (self.home / "proj" / "workflows" / "rel.sh").read_text()
+        self.assertIn("# param: VERSION=1.2.3", script)
+        self.assertNotIn("echo release 1.2.3", script)
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        r = self.cli("run", "rel", "-P", "VERSION=9.9.9", "-P", f"PROJECT_DIR={other}")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((other / "out.txt").read_text(), "release 9.9.9\n")
+        self.assertEqual((other / "v.txt").read_text(), "ver=9.9.9 port=8080\n")
+        self.assertFalse((self.proj / "out.txt").exists())
+
+    def test_defaults_reproduce_the_recording(self):
+        self.cli("extract", "rel", "--from", "1", "--param", "VERSION=1.2.3")
+        self.assertEqual(self.cli("run", "rel").returncode, 0)
+        self.assertEqual((self.proj / "out.txt").read_text(), "release 1.2.3\n")
+
+    def test_whole_tokens_only(self):
+        self.assertEqual(wf.parameterize("a 80 8080 /p/x /p/x-two /p/x/y", {"PORT": "80", "D": "/p/x"}),
+                         "a {{PORT}} 8080 {{D}} /p/x-two {{D}}/y")
+
+    def test_bad_values_refused(self):
+        self.cli("extract", "rel", "--from", "1", "--param", "VERSION=1.2.3")
+        for bad in ("VERSION=1;rm -rf x", "VERSION=$(id)", "VERSION=a b", "lower=1", "NOPE=1"):
+            r = self.cli("run", "rel", "-P", bad, check=False)
+            self.assertNotEqual(r.returncode, 0, bad)
+            self.assertFalse((self.proj / "out.txt").exists(), bad)
+
+    def test_missing_value_and_secret_refused(self):
+        self.assertNotEqual(self.cli("extract", "x", "--from", "1", "--param", "V=7.7.7", check=False).returncode, 0)
+        self.assertNotEqual(self.cli("extract", "x", "--from", "1", "--param", "API_TOKEN=1.2.3", check=False).returncode, 0)
+
+    def test_direct_bash_stops_before_running(self):
+        self.cli("extract", "rel", "--from", "1", "--param", "VERSION=1.2.3")
+        r = subprocess.run(["bash", str(self.home / "proj" / "workflows" / "rel.sh")], capture_output=True, text=True, cwd=self.proj)
+        self.assertEqual(r.returncode, 2)
+        self.assertFalse((self.proj / "out.txt").exists())
+
+    def test_other_template_syntax_untouched(self):
+        self.assertEqual(wf.render("{{.State}} {{OTHER}} {{V}}", {"V": "1"}), "{{.State}} {{OTHER}} 1")
+
+
+class TestDangerGate(Store):
+    def setUp(self):
+        super().setUp()
+        self.victim = self.proj / "victim"
+        self.victim.mkdir()
+        self.hook("Bash", {"command": "echo safe"})
+        self.hook("Bash", {"command": "rm -rf victim", "description": "Clean"})
+        self.cli("extract", "wipe", "--from", "1")
+
+    def test_logged_flagged_and_refused(self):
+        self.assertEqual(self.events()[1]["danger"], ["recursive delete"])
+        self.assertIn("# ! DANGEROUS: recursive delete", (self.home / "proj" / "sessions" / "0001.sh").read_text())
+        self.assertIn("DANGEROUS", self.cli("inspect", "wipe").stdout)
+        r = self.cli("run", "wipe", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("step 2: recursive delete", r.stderr)
+        self.assertTrue(self.victim.exists())
+
+    def test_gate_covers_only_selected_steps_and_can_be_approved(self):
+        self.assertEqual(self.cli("run", "wipe", "--steps", "1").returncode, 0)
+        self.assertEqual(self.cli("run", "wipe", "--dry-run").returncode, 0)
+        self.assertTrue(self.victim.exists())
+        self.assertEqual(self.cli("run", "wipe", "--allow-dangerous").returncode, 0)
+        self.assertFalse(self.victim.exists())
+
+    def test_safe_only_drops_step(self):
+        self.cli("extract", "safe", "--from", "1", "--safe-only")
+        self.assertEqual(self.cli("run", "safe").returncode, 0)
+        self.assertTrue(self.victim.exists())
+
+    def test_hand_edit_and_param_cannot_bypass(self):
+        p = self.home / "proj" / "workflows" / "wipe.sh"
+        p.write_text(p.read_text().replace("# ! DANGEROUS: recursive delete\n", ""))
+        self.assertNotEqual(self.cli("run", "wipe", check=False).returncode, 0)
+        self.hook("Bash", {"command": "git push --dry-run origin"})
+        self.cli("extract", "pushy", "--from", "1:3", "--param", "FLAG=--dry-run")
+        self.assertNotEqual(self.cli("run", "pushy", "-P", "FLAG=--force", check=False).returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

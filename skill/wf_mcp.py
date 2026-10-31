@@ -15,6 +15,8 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get("WF_HOME", Path.home() / "workflows"))
 WF = Path(__file__).with_name("wf.py")
+sys.path.insert(0, str(WF.parent))
+import wf  # noqa: E402  (shared risk rules)
 
 
 # ---------------------------------------------------------------- store access
@@ -47,7 +49,7 @@ def events(pdir, n):
 
 def step_view(pname, n, e, max_cmd=600):
     cmd = e["command"]
-    return {"ref": f"{pname}#{int(n)}:{e['step']}", "category": e["category"], "status": e["status"],
+    return {**wf.assess(cmd), "ref": f"{pname}#{int(n)}:{e['step']}", "category": e["category"], "status": e["status"],
             "tool": e.get("tool", "Bash"), "task": e.get("task", 0), "description": e["description"],
             "cwd": e["cwd"], "command": cmd if len(cmd) <= max_cmd else cmd[:max_cmd] + f"... [+{len(cmd) - max_cmd} chars]"}
 
@@ -145,7 +147,9 @@ def t_get_workflow(a):
     w = p / "workflows" / f"{a['name']}.sh"
     if not w.exists():
         raise ValueError(f"no workflow '{a['name']}' in {p.name}")
-    return {"project": p.name, "path": str(w), "script": w.read_text()}
+    text = w.read_text()
+    return {"project": p.name, "path": str(w), "script": text, "params": dict(wf.PARAM_DECL.findall(text)),
+            "steps": [{"n": s["n"], "title": s["title"], **wf.assess(s["body"])} for s in wf.parse_workflow(text)]}
 
 
 def t_extract_workflow(a):
@@ -156,6 +160,12 @@ def t_extract_workflow(a):
             args += [flag, a[k]]
     if a.get("include_failed"):
         args.append("--include-failed")
+    if a.get("safe_only"):
+        args.append("--safe-only")
+    if a.get("auto_params"):
+        args.append("--auto-params")
+    for kv in a.get("params") or []:
+        args += ["--param", kv]
     r = subprocess.run(args, capture_output=True, text=True, timeout=30)
     if r.returncode:
         raise ValueError((r.stderr or r.stdout).strip())
@@ -169,7 +179,7 @@ TOOLS = [
      {"project": P, "limit": {"type": "integer", "default": 20}}, []),
     ("search_steps", t_search_steps,
      "Keyword search over every recorded step (bash commands and Claude tool calls in their bash form) across sessions. "
-     "Returns only the best matches, each with a ref 'project#session:step'. Use to find how something was built, run, tested or debugged before.",
+     "Returns only the best matches, each with a ref 'project#session:step' and 'danger'/'once' risk reasons. Use to find how something was built, run, tested or debugged before.",
      {"query": {"type": "string"}, "project": P,
       "category": {"type": "string", "description": "Comma list of: find,debug,test,build,run,git,edit,note,other"},
       "ok_only": {"type": "boolean", "default": True, "description": "Skip failed/interrupted steps"},
@@ -184,7 +194,10 @@ TOOLS = [
      {"project": P, "name": {"type": "string", "description": "kebab-case name"},
       "sources": {"type": "array", "items": {"type": "string"}},
       "category": {"type": "string"}, "exclude_category": {"type": "string"}, "grep": {"type": "string"},
-      "description": {"type": "string"}, "include_failed": {"type": "boolean"}}, ["name", "sources"]),
+      "description": {"type": "string"}, "include_failed": {"type": "boolean"},
+      "safe_only": {"type": "boolean", "description": "Drop steps flagged dangerous"},
+      "auto_params": {"type": "boolean", "description": "Turn the project path into {{PROJECT_DIR}}"},
+      "params": {"type": "array", "items": {"type": "string"}, "description": "NAME=VALUE: replace VALUE with {{NAME}}"}}, ["name", "sources"]),
 ]
 BY_NAME = {t[0]: t for t in TOOLS}
 
