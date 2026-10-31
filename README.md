@@ -31,9 +31,11 @@ with the team.
 searches, edits and writes (as exact, replayable changes), web fetches, subagents and MCP calls.
 You can review it all before trusting or repeating it.
 
-**Spend fewer tokens.** Rerunning a saved workflow costs nothing, so Claude doesn't have to work it
-out again. Through MCP, agents can look up past steps and get back only the matches, not whole logs.
-The router shows an agent 4 tools instead of every server's full list.
+**Stop burning tokens on solved problems.** Instead of paying Claude to work the same problem out
+again, replay how it was solved. `wf mark` splits a session into tasks, and `wf extract` turns the
+steps that worked into a workflow, so problem solving becomes small chunks you can rerun and combine.
+Rerunning a saved workflow costs no tokens. Through MCP, agents can look up past steps and get back
+only the matches, not whole logs. The router shows an agent 4 tools instead of every server's full list.
 
 **Know what's safe to replay.** Every step is flagged if it's dangerous (`rm -rf`, force push, `sudo`,
 `curl | sh`, `terraform destroy`, publishes) or won't rerun cleanly (commits, pushes, appends, one-shot edits).
