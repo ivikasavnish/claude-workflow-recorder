@@ -281,6 +281,18 @@ class TestDangerGate(Store):
         self.assertNotEqual(self.cli("run", "pushy", "-P", "FLAG=--force", check=False).returncode, 0)
 
 
+class TestKeyRedaction(unittest.TestCase):
+    def test_whole_pem_block_is_redacted(self):
+        pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\nQUJD\n-----END PRIVATE KEY-----\ntail"
+        self.assertEqual(wf.redact(pem), "-----BEGIN PRIVATE KEY-----<REDACTED>\ntail")
+        self.assertEqual(wf.redact('k: "-----BEGIN RSA PRIVATE KEY-----\\nMIIEvQ'), 'k: "-----BEGIN RSA PRIVATE KEY-----<REDACTED>')
+
+    def test_guard_allows_only_the_redacted_form(self):
+        self.assertIsNone(wf.LEAK_RX.search("-----BEGIN PRIVATE KEY-----<REDACTED>\n"))
+        self.assertIsNotNone(wf.LEAK_RX.search("-----BEGIN PRIVATE KEY-----<REDACTED>MIIEvQIBADAN"))
+        self.assertIsNotNone(wf.LEAK_RX.search("-----BEGIN PRIVATE KEY-----\nMIIE"))
+
+
 class TestSync(Store):
     def setUp(self):
         super().setUp()

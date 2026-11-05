@@ -150,7 +150,8 @@ REDACTIONS = [
     (r"\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS)[A-Z0-9_]*=)(?!\$)[^\s'\"]+", r"\1<REDACTED>"),
     (r"(?i)(--?(?:password|passwd|token|api-key|apikey|secret)[= ]\s*)(?!\$)[^\s'\"]+", r"\1<REDACTED>"),
     (r"\b(sk-|ghp_|gho_|xox[bp]-|AIza)[A-Za-z0-9_\-]{12,}", r"\1<REDACTED>"),
-    (r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)(?!<REDACTED>)[A-Za-z0-9+/=\\\s]*", r"\1<REDACTED>"),
+    # The whole PEM block, to its END line, or to the end of its base64 when it was cut off
+    (r"(?s)(-----BEGIN ([A-Z ]*)PRIVATE KEY-----)(?:.*?-----END \2PRIVATE KEY-----|[A-Za-z0-9+/=\\\s]*)", r"\1<REDACTED>"),
 ]
 
 def redact(s):
@@ -471,7 +472,7 @@ __pycache__/
 runs/
 """
 # Secrets the logs' redaction should already have removed; a commit holding one is refused.
-LEAK_RX = re.compile(r"(ghp_|gho_|github_pat_|sk-(?:ant-|proj-)?|xox[bpas]-|AKIA|AIza)[A-Za-z0-9_\-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----(?!<REDACTED>)")
+LEAK_RX = re.compile(r"(ghp_|gho_|github_pat_|sk-(?:ant-|proj-)?|xox[bpas]-|AKIA|AIza)[A-Za-z0-9_\-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----(?!<REDACTED>(?![A-Za-z0-9+/]))")
 
 
 def machine_id():
