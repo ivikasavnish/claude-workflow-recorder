@@ -186,3 +186,16 @@ No dependencies. CI runs on Linux and macOS with Python 3.9 and 3.12, plus an in
 ## License
 
 MIT
+
+## Sync to a private repo, one branch per machine
+
+```bash
+wf sync --init --private <you>/workflows-private   # once per machine: git repo + private GitHub repo
+wf machine                                        # this machine's branch, e.g. machine/pop-os-2f0aaf74
+```
+
+After that, every session start and end commits `~/workflows` and pushes it in the background to
+`machine/<host>-<id>`, where `<id>` is a hash of the machine id (`/etc/machine-id`, or the Mac's
+hardware UUID), so two machines never write the same branch. `runs/` output is not committed, a
+remote that isn't private is refused, and a commit holding a token-like value is refused. Set
+`WF_SYNC=0` to pause syncing, `WF_BRANCH` to name the branch yourself. Log: `~/workflows/.sync.log`.

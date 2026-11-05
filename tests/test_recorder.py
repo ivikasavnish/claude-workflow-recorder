@@ -281,5 +281,46 @@ class TestDangerGate(Store):
         self.assertNotEqual(self.cli("run", "pushy", "-P", "FLAG=--force", check=False).returncode, 0)
 
 
+class TestSync(Store):
+    def setUp(self):
+        super().setUp()
+        self.remote = Path(self.tmp.name) / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(self.remote)], check=True)
+        self.env["WF_BRANCH"] = "machine/test-box"
+        self.env["WF_SYNC"] = "0"  # hooks below don't sync in the background
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.home), *args], capture_output=True, text=True, check=True).stdout
+
+    def test_branch_names_the_machine(self):
+        env = {k: v for k, v in self.env.items() if k != "WF_BRANCH"}
+        out = subprocess.run([sys.executable, str(WF), "machine"], text=True, capture_output=True, env=env, check=True).stdout.strip()
+        self.assertRegex(out, r"^machine/[a-z0-9-]+-[0-9a-f]{8}$")
+
+    def test_pushes_to_the_machine_branch_and_skips_run_output(self):
+        self.hook("Bash", {"command": "ls", "description": "list"})
+        (self.home / "proj" / "runs").mkdir(exist_ok=True)
+        (self.home / "proj" / "runs" / "x.log").write_text("output")
+        self.assertNotEqual(self.cli("sync", check=False).returncode, 0, "needs --init first")
+        self.cli("sync", "--init")
+        self.git("remote", "add", "origin", str(self.remote))
+        self.assertIn("pushed", self.cli("sync").stdout)
+        self.assertIn("up to date", self.cli("sync").stdout)
+        heads = subprocess.run(["git", "-C", str(self.remote), "branch"], capture_output=True, text=True).stdout
+        self.assertIn("machine/test-box", heads)
+        files = self.git("ls-files")
+        self.assertIn("proj/sessions/0001.sh", files)
+        self.assertNotIn("runs/", files)
+
+    def test_a_secret_is_never_committed(self):
+        self.cli("sync", "--init")
+        (self.home / "proj" / "sessions").mkdir(parents=True, exist_ok=True)
+        (self.home / "proj" / "sessions" / "0009.sh").write_text("echo ghp_" + "a" * 30 + "\n")
+        r = self.cli("sync", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("secret", r.stderr)
+        self.assertNotIn("0009.sh", self.git("ls-files"))
+
+
 if __name__ == "__main__":
     unittest.main()

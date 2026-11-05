@@ -63,7 +63,12 @@ wf extract debug-sip --from 7@2 -d "Reproduce SIP call drop + collect logcat"
 wf workflows                      # list saved workflows
 wf run <name> [--dry-run] [-e K=V] [--inherit-env] [-P NAME=value] [--allow-dangerous]
 wf inspect <name>                 # parameters, dangerous and non-repeatable steps
+wf sync [--init --private OWNER/REPO]  # commit ~/workflows, push to a private repo on this machine's branch
+wf machine                        # this machine's branch: machine/<host>-<id>
 ```
+
+Once `wf sync --init` has run, session start and end sync in the background. Never point it at a
+public repo (it refuses), and never use `--force` on a machine branch.
 
 Risk flags: `danger` steps are refused by `wf run` unless `--allow-dangerous` is passed; `once` steps only warn.
 Never pass `--allow-dangerous` on your own: show the user the flagged steps and get their approval first.

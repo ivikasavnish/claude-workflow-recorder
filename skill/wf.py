@@ -11,10 +11,18 @@ Storage (per project, outside the repo so secrets never get committed):
 
 Hook mode (stdin = hook JSON):  wf.py hook
 CLI mode:                       wf.py <command> ...   (see `wf.py -h`)
+
+Sync (optional): `wf sync --init --private <repo>` makes ~/workflows a git repo pushed to a private
+GitHub repo, on a branch of its own per machine (machine/<host>-<id>), so machines never conflict.
+After that every session start and end commits and pushes in the background.
 """
 import argparse
 import datetime as dt
 import fcntl
+import hashlib
+import platform
+import socket
+import uuid
 import json
 import os
 import re
@@ -403,6 +411,10 @@ def hook():
     pdir = project_dir(cwd)
     n, is_new = session_number(pdir, sid, cwd)
 
+    if name in ("SessionStart", "SessionEnd"):
+        sync_in_background()
+    if name == "SessionEnd":
+        return
     if name == "SessionStart":
         state = "started" if is_new else "resumed"
         print(f"[workflow-recorder] Session #{n:04d} {state} for project '{pdir.name}'. "
@@ -445,6 +457,128 @@ def hook():
         text += f"cd {shlex.quote(cwd)}\n"
     text += cmd_r + "\n"
     append(pdir, n, event, text)
+
+
+# ---------------------------------------------------------------- sync: private git, a branch per machine
+
+SYNC_IGNORE = """# written by wf sync
+.index.lock
+.sync.lock
+.sync.log
+__pycache__/
+# `wf run` output can hold anything a command printed
+runs/
+"""
+# Secrets the logs' redaction should already have removed; a commit holding one is refused.
+LEAK_RX = re.compile(r"(ghp_|gho_|github_pat_|sk-(?:ant-|proj-)?|xox[bpas]-|AKIA|AIza)[A-Za-z0-9_\-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+
+
+def machine_id():
+    """A stable id for this machine, not secret: /etc/machine-id, the Mac's hardware UUID, or the MAC."""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            raw = Path(path).read_text().strip()
+            if raw:
+                return hashlib.sha256(raw.encode()).hexdigest()[:8]
+        except OSError:
+            pass
+    if platform.system() == "Darwin":
+        try:
+            out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True, timeout=3).stdout
+            m = re.search(r'"IOPlatformUUID" = "([^"]+)"', out)
+            if m:
+                return hashlib.sha256(m.group(1).encode()).hexdigest()[:8]
+        except Exception:
+            pass
+    return hashlib.sha256(str(uuid.getnode()).encode()).hexdigest()[:8]
+
+
+def machine_branch():
+    if os.environ.get("WF_BRANCH"):
+        return os.environ["WF_BRANCH"]
+    host = re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-") or "host"
+    return f"machine/{host}-{machine_id()}"
+
+
+def git(*args, check=True):
+    p = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=120)
+    if check and p.returncode:
+        raise RuntimeError(f"git {' '.join(args)}: {(p.stderr or p.stdout).strip()[-300:]}")
+    return p.stdout.strip()
+
+
+def sync_enabled():
+    return (ROOT / ".git").exists() and os.environ.get("WF_SYNC", "1") != "0"
+
+
+def sync_in_background():
+    """Commits and pushes without holding up the hook."""
+    if not sync_enabled():
+        return
+    try:
+        log = open(ROOT / ".sync.log", "a")
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "sync", "--quiet"],
+                         stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    except Exception:
+        pass
+
+
+def sync(quiet=False):
+    lock = open(ROOT / ".sync.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return "another sync is running"
+    branch = machine_branch()
+    if git("rev-parse", "--abbrev-ref", "HEAD", check=False) != branch:
+        git("checkout", "-B", branch) if not git("branch", "--list", branch) else git("checkout", branch)
+    git("add", "-A")
+    staged = git("diff", "--cached", "--name-only")
+    if staged:
+        diff = git("diff", "--cached", "-U0")
+        leak = LEAK_RX.search(diff)
+        if leak:
+            git("reset", "-q")
+            raise RuntimeError(f"refused: a secret-like value ({leak.group(0)[:8]}…) is in the changes; redact it, then sync")
+        n = len(staged.splitlines())
+        git("commit", "-q", "-m", f"{socket.gethostname()}: {n} file(s) at {now('%Y-%m-%d %H:%M')}")
+    if not git("remote", check=False):
+        return f"committed on {branch}; no remote yet (wf sync --private <repo>)"
+    ahead = git("rev-list", "--count", f"origin/{branch}..HEAD", check=False) if git("ls-remote", "--heads", "origin", branch, check=False) else "new"
+    if ahead == "0":
+        return f"{branch}: up to date"
+    git("push", "-q", "-u", "origin", branch)
+    return f"{branch}: pushed"
+
+
+def cmd_sync(a):
+    ROOT.mkdir(parents=True, exist_ok=True)
+    if not (ROOT / ".git").exists():
+        if not a.init:
+            sys.exit(f"wf: {ROOT} isn't a git repo yet; run: wf sync --init --private <name>")
+        git("init", "-q", "-b", machine_branch())
+    ignore = ROOT / ".gitignore"
+    if not ignore.exists() or "written by wf sync" not in ignore.read_text():
+        ignore.write_text(SYNC_IGNORE + (ignore.read_text() if ignore.exists() else ""))
+    if a.private and not git("remote", check=False):
+        # A private repo of the signed-in GitHub account; created if missing
+        exists = subprocess.run(["gh", "repo", "view", a.private, "--json", "visibility", "-q", ".visibility"], capture_output=True, text=True)
+        if exists.returncode == 0 and exists.stdout.strip() != "PRIVATE":
+            sys.exit(f"wf: {a.private} exists and is {exists.stdout.strip().lower()}; logs go only to a private repo")
+        if exists.returncode:
+            subprocess.run(["gh", "repo", "create", a.private, "--private", "--description", "Claude Code workflow logs (wf)"], check=True, capture_output=True)
+        url = subprocess.run(["gh", "repo", "view", a.private, "--json", "url", "-q", ".url"], capture_output=True, text=True, check=True).stdout.strip()
+        git("remote", "add", "origin", url + ".git")
+    if a.private is None and git("remote", check=False):
+        vis = subprocess.run(["gh", "repo", "view", git("remote", "get-url", "origin"), "--json", "visibility", "-q", ".visibility"], capture_output=True, text=True)
+        if vis.returncode == 0 and vis.stdout.strip() not in ("PRIVATE", ""):
+            sys.exit(f"wf: origin is {vis.stdout.strip().lower()}; refusing to push logs to it")
+    try:
+        msg = sync(a.quiet)
+    except Exception as e:
+        sys.exit(f"wf sync: {e}")
+    if not a.quiet or "pushed" in msg:
+        print(f"[{now()}] {msg}")
 
 
 # ---------------------------------------------------------------- CLI
@@ -830,6 +964,12 @@ def main():
     p.add_argument("--allow-dangerous", action="store_true", help="run steps flagged dangerous")
     p.set_defaults(fn=cmd_run)
     sub.add_parser("ui", help="open the Workflows app (viewer + runner)").set_defaults(fn=cmd_ui)
+    p = sub.add_parser("sync", help="commit ~/workflows and push it to a private repo, on this machine's branch")
+    p.add_argument("--init", action="store_true", help="make the store a git repo first")
+    p.add_argument("--private", metavar="OWNER/REPO", help="private GitHub repo to push to (created if missing)")
+    p.add_argument("--quiet", action="store_true")
+    p.set_defaults(fn=cmd_sync)
+    sub.add_parser("machine", help="this machine's sync branch").set_defaults(fn=lambda a: print(machine_branch()))
 
     a = ap.parse_args()
     a.fn(a)

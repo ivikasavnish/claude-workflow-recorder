@@ -61,6 +61,7 @@ if [ "$DO_HOOKS" = 1 ]; then
     def ours: {hooks: [{type: "command", command: $cmd, timeout: 10}]};
     .hooks = (.hooks // {})
     | .hooks.SessionStart       = (((.hooks.SessionStart       // []) | strip) + [ours])
+    | .hooks.SessionEnd         = (((.hooks.SessionEnd         // []) | strip) + [ours])
     | .hooks.PostToolUse        = (((.hooks.PostToolUse        // []) | strip) + [ours])
     | .hooks.PostToolUseFailure = (((.hooks.PostToolUseFailure // []) | strip) + [ours])
   ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
