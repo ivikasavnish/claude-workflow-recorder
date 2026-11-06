@@ -333,6 +333,63 @@ class TestSync(Store):
         self.assertIn("secret", r.stderr)
         self.assertNotIn("0009.sh", self.git("ls-files"))
 
+    def test_other_machines_are_pulled_and_readable(self):
+        self.hook("Bash", {"command": "make build", "description": "build on box A"})
+        self.cli("sync", "--init")
+        self.git("remote", "add", "origin", str(self.remote))
+        self.cli("sync")
+        # a second machine with its own store, syncing to the same repo
+        other = Path(self.tmp.name) / "store-b"
+        env_b = {**self.env, "WF_HOME": str(other), "WF_BRANCH": "machine/box-b"}
+        def b(*args):
+            return subprocess.run([sys.executable, str(WF), "-p", "proj", *args], text=True,
+                                  capture_output=True, env=env_b, check=True).stdout
+        b("sync", "--init")
+        subprocess.run(["git", "-C", str(other), "remote", "add", "origin", str(self.remote)], check=True)
+        self.assertIn("1 other machine", b("sync"))
+        self.assertIn("test-box", b("machines"))
+        self.assertIn("make build", b("--machine", "test-box", "search", "make"))
+        self.assertIn("== test-box ==", b("--machine", "all", "list"))
+        self.assertNotIn(".machines", subprocess.run(["git", "-C", str(other), "ls-files"], capture_output=True, text=True).stdout)
+        # new steps on A show up on B's next sync
+        self.hook("Bash", {"command": "make release", "description": "release"})
+        self.cli("sync")
+        b("sync")
+        self.assertIn("make release", b("--machine", "test-box", "search", "release"))
+        r = subprocess.run([sys.executable, str(WF), "-p", "proj", "--machine", "test-box", "mark", "x"],
+                           text=True, capture_output=True, env=env_b)
+        self.assertNotEqual(r.returncode, 0, "other machines are read-only")
+
+    def test_in_session_sync_is_throttled(self):
+        stamp = self.home / ".sync.stamp"
+        self.assertTrue(wf.sync_due(stamp, 300))
+        self.home.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        t = stamp.stat().st_mtime
+        self.assertFalse(wf.sync_due(stamp, 300, at=t + 10))
+        self.assertTrue(wf.sync_due(stamp, 300, at=t + 300))
+
+    def test_tool_calls_sync_in_the_background(self):
+        self.cli("sync", "--init")
+        self.env["WF_SYNC"] = "1"
+        self.env["WF_SYNC_INTERVAL"] = "0"
+        self.hook("Bash", {"command": "ls", "description": "list"})
+        self.assertFalse((self.home / ".sync.stamp").exists(), "interval 0 turns in-session sync off")
+        self.env["WF_SYNC_INTERVAL"] = "300"
+        self.hook("Bash", {"command": "ls", "description": "list"})
+        self.assertTrue((self.home / ".sync.stamp").exists())
+
+    def test_timer_files(self):
+        files = wf.schedule_files(15)
+        text = "\n".join(files.values())
+        self.assertIn("sync", text)
+        self.assertIn(str(Path(wf.__file__).resolve()), text)
+        if sys.platform == "darwin":
+            self.assertIn("<integer>900</integer>", text)
+        else:
+            self.assertIn("OnUnitActiveSec=15min", text)
+            self.assertEqual({p.name for p in files}, {"wf-sync.service", "wf-sync.timer"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,8 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null; then
   ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
   echo "removed hooks from $SETTINGS"
 fi
+WF_PY="$CLAUDE_DIR/skills/workflow-recorder/wf.py"
+[ -f "$WF_PY" ] && python3 "$WF_PY" sync --unschedule 2>/dev/null || true
 command -v claude >/dev/null && claude mcp remove -s user router >/dev/null 2>&1 && echo "unregistered MCP 'router'" || true
 pkill -f 'workflow-recorder/app/server.py' 2>/dev/null || true
 [ -L "$HOME/.local/bin/wf" ] && unlink "$HOME/.local/bin/wf" && echo "removed ~/.local/bin/wf"

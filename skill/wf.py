@@ -14,7 +14,9 @@ CLI mode:                       wf.py <command> ...   (see `wf.py -h`)
 
 Sync (optional): `wf sync --init --private <repo>` makes ~/workflows a git repo pushed to a private
 GitHub repo, on a branch of its own per machine (machine/<host>-<id>), so machines never conflict.
-After that every session start and end commits and pushes in the background.
+After that every session start and end, and a tool call at most every WF_SYNC_INTERVAL seconds, commits
+and pushes in the background, then mirrors the other machines' branches under ~/workflows/.machines/.
+`wf sync --schedule MIN` also syncs on a systemd user timer / launchd agent with no session open.
 """
 import argparse
 import datetime as dt
@@ -29,6 +31,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HOME = Path.home()
@@ -415,6 +418,8 @@ def hook():
 
     if name in ("SessionStart", "SessionEnd"):
         sync_in_background()
+    else:  # tool calls: at most one sync per WF_SYNC_INTERVAL, so long sessions are pushed as they go
+        sync_in_background(every=sync_interval())
     if name == "SessionEnd":
         return
     if name == "SessionStart":
@@ -467,7 +472,10 @@ SYNC_IGNORE = """# written by wf sync
 .index.lock
 .sync.lock
 .sync.log
+.sync.stamp
 __pycache__/
+# other machines' branches, checked out by wf sync
+.machines/
 # `wf run` output can hold anything a command printed
 runs/
 """
@@ -502,8 +510,8 @@ def machine_branch():
     return f"machine/{host}-{machine_id()}"
 
 
-def git(*args, check=True):
-    p = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=120)
+def git(*args, check=True, cwd=None):
+    p = subprocess.run(["git", "-C", str(cwd or ROOT), *args], capture_output=True, text=True, timeout=120)
     if check and p.returncode:
         raise RuntimeError(f"git {' '.join(args)}: {(p.stderr or p.stdout).strip()[-300:]}")
     return p.stdout.strip()
@@ -513,11 +521,31 @@ def sync_enabled():
     return (ROOT / ".git").exists() and os.environ.get("WF_SYNC", "1") != "0"
 
 
-def sync_in_background():
-    """Commits and pushes without holding up the hook."""
-    if not sync_enabled():
+def sync_interval():
+    """Seconds between in-session syncs (WF_SYNC_INTERVAL, default 300); 0 turns them off."""
+    try:
+        return max(0, int(os.environ.get("WF_SYNC_INTERVAL", "300")))
+    except ValueError:
+        return 300
+
+
+def sync_due(stamp, every, at=None):
+    """True when the last sync started `every` seconds ago or more (or never)."""
+    try:
+        return (at or time.time()) - stamp.stat().st_mtime >= every
+    except OSError:
+        return True
+
+
+def sync_in_background(every=None):
+    """Commits and pushes without holding up the hook. With `every`, skips if a sync started that recently."""
+    if not sync_enabled() or every == 0:
+        return
+    stamp = ROOT / ".sync.stamp"
+    if every and not sync_due(stamp, every):
         return
     try:
+        stamp.touch()
         log = open(ROOT / ".sync.log", "a")
         subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "sync", "--quiet"],
                          stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
@@ -531,6 +559,7 @@ def sync(quiet=False):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return "another sync is running"
+    ensure_ignore()
     branch = machine_branch()
     if git("rev-parse", "--abbrev-ref", "HEAD", check=False) != branch:
         git("checkout", "-B", branch) if not git("branch", "--list", branch) else git("checkout", branch)
@@ -548,20 +577,152 @@ def sync(quiet=False):
         return f"committed on {branch}; no remote yet (wf sync --private <repo>)"
     ahead = git("rev-list", "--count", f"origin/{branch}..HEAD", check=False) if git("ls-remote", "--heads", "origin", branch, check=False) else "new"
     if ahead == "0":
-        return f"{branch}: up to date"
-    git("push", "-q", "-u", "origin", branch)
-    return f"{branch}: pushed"
+        msg = f"{branch}: up to date"
+    else:
+        git("push", "-q", "-u", "origin", branch)
+        msg = f"{branch}: pushed"
+    try:
+        n = pull_machines(branch)
+        if n:
+            msg += f"; {n} other machine(s) in {ROOT / MACHINES}"
+    except Exception as e:  # pulling is a convenience; the push above already happened
+        msg += f"; pulling other machines failed: {e}"
+    return msg
+
+
+# Other machines' branches, checked out read-only (detached worktrees) for `wf --machine NAME ...`
+MACHINES = ".machines"
+
+
+def machine_label(branch):
+    return branch.split("/", 1)[1].replace("/", "_")
+
+
+def pull_machines(own):
+    """Fetch every machine/* branch and mirror the others under ~/workflows/.machines/<host-id>/."""
+    git("fetch", "-q", "--prune", "origin", "+refs/heads/machine/*:refs/remotes/origin/machine/*")
+    refs = git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/machine/").splitlines()
+    others = {machine_label(r[len("refs/remotes/origin/"):]): r for r in refs if r != f"refs/remotes/origin/{own}"}
+    base = ROOT / MACHINES
+    for label, ref in others.items():
+        wt = base / label
+        if (wt / ".git").exists():
+            git("checkout", "-q", "--force", "--detach", ref, cwd=wt)
+        else:
+            base.mkdir(exist_ok=True)
+            git("worktree", "add", "-q", "--force", "--detach", str(wt), ref)
+    for wt in (base.iterdir() if base.is_dir() else []):
+        if wt.name not in others:  # that machine's branch was deleted on the remote
+            git("worktree", "remove", "--force", str(wt), check=False)
+    git("worktree", "prune", check=False)
+    return len(others)
+
+
+def machine_names():
+    base = ROOT / MACHINES
+    return sorted(d.name for d in base.iterdir() if (d / ".git").exists()) if base.is_dir() else []
+
+
+def cmd_machines(a):
+    print(f"{machine_branch():<44} (this machine)")
+    for name in machine_names():
+        when = git("log", "-1", "--format=%cr", cwd=ROOT / MACHINES / name, check=False)
+        print(f"machine/{name:<36} last sync {when or '?'}   wf --machine {name} list")
+
+
+def ensure_ignore():
+    ignore = ROOT / ".gitignore"
+    text = ignore.read_text() if ignore.exists() else ""
+    if "written by wf sync" not in text:
+        text = SYNC_IGNORE + text
+    missing = [l for l in SYNC_IGNORE.splitlines() if l and not l.startswith("#") and l not in text.splitlines()]
+    if missing or not ignore.exists():
+        ignore.write_text(text + "".join(l + "\n" for l in missing))
+
+
+# ---------------------------------------------------------------- sync: on a timer, with no session open
+
+UNIT = "wf-sync"
+LAUNCHD_LABEL = "com.github.claude-workflow-recorder.sync"
+
+
+def schedule_files(minutes):
+    """{path: content} for a systemd user timer (Linux) or a launchd agent (macOS) running `wf sync`."""
+    script, log = str(Path(__file__).resolve()), str(ROOT / ".sync.log")
+    env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "WF_HOME": str(ROOT)}
+    if platform.system() == "Darwin":
+        esc = lambda s: s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        args = "".join(f"<string>{esc(x)}</string>" for x in (sys.executable, script, "sync", "--quiet"))
+        envs = "".join(f"<key>{k}</key><string>{esc(v)}</string>" for k, v in env.items())
+        plist = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            f'<plist version="1.0"><dict><key>Label</key><string>{LAUNCHD_LABEL}</string>'
+            f"<key>ProgramArguments</key><array>{args}</array>"
+            f"<key>EnvironmentVariables</key><dict>{envs}</dict>"
+            f"<key>StartInterval</key><integer>{minutes * 60}</integer><key>RunAtLoad</key><true/>"
+            f"<key>StandardOutPath</key><string>{esc(log)}</string><key>StandardErrorPath</key><string>{esc(log)}</string>"
+            "</dict></plist>\n")
+        return {HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist": plist}
+    q = lambda s: '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+    unit_dir = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "systemd" / "user"
+    service = ("[Unit]\nDescription=wf sync: push the workflow store to its private repo\n\n[Service]\nType=oneshot\n"
+               + "".join(f"Environment={q(f'{k}={v}')}\n" for k, v in env.items())
+               + f"ExecStart={q(sys.executable)} {q(script)} sync --quiet\n"
+               f"StandardOutput=append:{log}\nStandardError=append:{log}\n")
+    timer = (f"[Unit]\nDescription=Run wf sync every {minutes} min\n\n[Timer]\nOnBootSec=2min\n"
+             f"OnUnitActiveSec={minutes}min\n\n[Install]\nWantedBy=timers.target\n")
+    return {unit_dir / f"{UNIT}.service": service, unit_dir / f"{UNIT}.timer": timer}
+
+
+def run_quiet(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def schedule(minutes):
+    files = schedule_files(minutes)
+    for path, content in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    if platform.system() == "Darwin":
+        plist, dom = str(next(iter(files))), f"gui/{os.getuid()}"
+        run_quiet("launchctl", "bootout", dom, plist)
+        p = run_quiet("launchctl", "bootstrap", dom, plist)
+    else:
+        run_quiet("systemctl", "--user", "daemon-reload")
+        p = run_quiet("systemctl", "--user", "enable", "--now", f"{UNIT}.timer")
+    if p.returncode:
+        sys.exit(f"wf: wrote {', '.join(map(str, files))} but couldn't start it: {(p.stderr or p.stdout).strip()}")
+    print(f"wf sync scheduled every {minutes} min ({', '.join(map(str, files))}); log: {ROOT / '.sync.log'}")
+
+
+def unschedule():
+    files = schedule_files(1)
+    if platform.system() == "Darwin":
+        run_quiet("launchctl", "bootout", f"gui/{os.getuid()}", str(next(iter(files))))
+    else:
+        run_quiet("systemctl", "--user", "disable", "--now", f"{UNIT}.timer")
+    removed = [str(p) for p in files if p.exists()]
+    for p in files:
+        p.unlink(missing_ok=True)
+    if platform.system() != "Darwin":
+        run_quiet("systemctl", "--user", "daemon-reload")
+    print(f"wf sync timer removed ({', '.join(removed)})" if removed else "wf sync: no timer was scheduled")
 
 
 def cmd_sync(a):
+    if a.unschedule:
+        return unschedule()
     ROOT.mkdir(parents=True, exist_ok=True)
     if not (ROOT / ".git").exists():
         if not a.init:
             sys.exit(f"wf: {ROOT} isn't a git repo yet; run: wf sync --init --private <name>")
         git("init", "-q", "-b", machine_branch())
-    ignore = ROOT / ".gitignore"
-    if not ignore.exists() or "written by wf sync" not in ignore.read_text():
-        ignore.write_text(SYNC_IGNORE + (ignore.read_text() if ignore.exists() else ""))
+    ensure_ignore()
+    if a.schedule is not None:
+        if a.schedule < 1:
+            sys.exit("wf: --schedule takes minutes, at least 1")
+        return schedule(a.schedule)
     if a.private and not git("remote", check=False):
         # A private repo of the signed-in GitHub account; created if missing
         exists = subprocess.run(["gh", "repo", "view", a.private, "--json", "visibility", "-q", ".visibility"], capture_output=True, text=True)
@@ -926,6 +1087,8 @@ def main():
 
     ap = argparse.ArgumentParser(prog="wf", description="Claude Code workflow recorder")
     ap.add_argument("-p", "--project", help="project name (default: git root of cwd)")
+    ap.add_argument("-m", "--machine", metavar="NAME",
+                    help="read another machine's synced sessions (see `wf machines`); 'all' = every machine")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("status", help="store location, session count, workflows").set_defaults(fn=cmd_status)
@@ -970,11 +1133,51 @@ def main():
     p.add_argument("--init", action="store_true", help="make the store a git repo first")
     p.add_argument("--private", metavar="OWNER/REPO", help="private GitHub repo to push to (created if missing)")
     p.add_argument("--quiet", action="store_true")
+    p.add_argument("--schedule", type=int, metavar="MIN", help="also sync every MIN minutes with no session open (systemd user timer / launchd)")
+    p.add_argument("--unschedule", action="store_true", help="remove the timer")
     p.set_defaults(fn=cmd_sync)
     sub.add_parser("machine", help="this machine's sync branch").set_defaults(fn=lambda a: print(machine_branch()))
+    sub.add_parser("machines", help="machines whose sessions sync has pulled").set_defaults(fn=cmd_machines)
 
     a = ap.parse_args()
+    if a.machine:
+        return on_machines(a)
     a.fn(a)
+
+
+READ_ONLY_CMDS = ("status", "list", "show", "search", "workflows", "inspect")
+
+
+def on_machines(a):
+    """Runs a read-only command against other machines' mirrored stores (`wf sync` pulls them)."""
+    global ROOT
+    if a.cmd not in READ_ONLY_CMDS:
+        sys.exit(f"wf: --machine works with {', '.join(READ_ONLY_CMDS)}; other machines' stores are read-only")
+    base, names = ROOT, machine_names()
+    if a.machine == "all":
+        roots = [("this machine", base)] + [(n, base / MACHINES / n) for n in names]
+    elif a.machine in names:
+        roots = [(a.machine, base / MACHINES / a.machine)]
+    else:
+        sys.exit(f"wf: no synced machine '{a.machine}'; known: {', '.join(names) or 'none (run wf sync)'}")
+    project = a.project or project_root(None).name or "root"
+    shown = 0
+    for label, root in roots:
+        if not (root / project).is_dir():
+            continue
+        if len(roots) > 1:
+            print(f"== {label} ==")
+        ROOT = root
+        try:
+            a.fn(a)
+        except SystemExit as e:  # e.g. no sessions on that machine: keep going with the rest
+            if len(roots) == 1:
+                raise
+            if e.code:
+                print(e.code)
+        shown += 1
+    if not shown:
+        sys.exit(f"wf: project '{project}' has no synced sessions on {a.machine}")
 
 
 if __name__ == "__main__":

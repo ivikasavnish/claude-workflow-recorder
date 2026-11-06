@@ -65,9 +65,12 @@ wf run <name> [--dry-run] [-e K=V] [--inherit-env] [-P NAME=value] [--allow-dang
 wf inspect <name>                 # parameters, dangerous and non-repeatable steps
 wf sync [--init --private OWNER/REPO]  # commit ~/workflows, push to a private repo on this machine's branch
 wf machine                        # this machine's branch: machine/<host>-<id>
+wf machines                       # other machines pulled by sync (read-only mirrors)
+wf --machine <name|all> search|list|show ...   # read another machine's sessions
+wf sync --schedule MIN | --unschedule          # sync on a timer with no session open
 ```
 
-Once `wf sync --init` has run, session start and end sync in the background. Never point it at a
+Once `wf sync --init` has run, session start and end (and tool calls, at most every `WF_SYNC_INTERVAL` s) sync in the background. Never point it at a
 public repo (it refuses), and never use `--force` on a machine branch.
 
 Risk flags: `danger` steps are refused by `wf run` unless `--allow-dangerous` is passed; `once` steps only warn.

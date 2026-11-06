@@ -194,8 +194,26 @@ wf sync --init --private <you>/workflows-private   # once per machine: git repo 
 wf machine                                        # this machine's branch, e.g. machine/pop-os-2f0aaf74
 ```
 
-After that, every session start and end commits `~/workflows` and pushes it in the background to
+After that, every session start and end — and, during a session, a tool call at most once every
+`WF_SYNC_INTERVAL` seconds (default 300, `0` turns it off) — commits `~/workflows` and pushes it in the background to
 `machine/<host>-<id>`, where `<id>` is a hash of the machine id (`/etc/machine-id`, or the Mac's
 hardware UUID), so two machines never write the same branch. `runs/` output is not committed, a
 remote that isn't private is refused, and a commit holding a token-like value is refused. Set
 `WF_SYNC=0` to pause syncing, `WF_BRANCH` to name the branch yourself. Log: `~/workflows/.sync.log`.
+
+Each sync also pulls the other machines' branches and mirrors them, read-only, under `~/workflows/.machines/`:
+
+```bash
+wf machines                           # synced machines and when each last pushed
+wf --machine pop-os-2f0aaf74 list     # another machine's sessions for this project
+wf --machine all search 'gradlew'     # search this machine and every other one
+```
+
+`--machine` works with `status`, `list`, `show`, `search`, `workflows` and `inspect`.
+
+To sync with no Claude session open, install a timer (a systemd user timer on Linux, a launchd agent on macOS):
+
+```bash
+wf sync --schedule 30                 # every 30 minutes
+wf sync --unschedule
+```

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Auto sync: besides session start and end, tool calls sync in the background at most every
+  `WF_SYNC_INTERVAL` seconds (default 300). Each sync pulls other machines' branches into read-only mirrors
+  under `~/workflows/.machines/`; read them with `wf machines` and `wf --machine NAME|all list/show/search`.
+  `wf sync --schedule MIN` installs a systemd user timer / launchd agent; `--unschedule` removes it.
 - Risk awareness: every step is flagged `danger` (recursive deletes, force pushes, `sudo`, `curl | sh`,
   infrastructure changes, publishes, …) and/or `once` (commits, pushes, appends, edits that won't reapply).
   Flags appear in session logs, `wf show`, `wf inspect`, extracted scripts, the app and MCP results.
