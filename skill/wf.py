@@ -286,25 +286,35 @@ q = shlex.quote
 
 
 PARAM_STR_MAX = 2000
-SECRET_KEY = re.compile(r"(?i)(pass(word|wd)?|secret|token|api[_-]?key|auth(orization)?|credential|private[_-]?key|cookie)$")
-FILE_BODY_KEYS = {"content", "old_string", "new_string", "new_source"}
+SECRET_KEY = re.compile(r"(?i)(pass(word|wd|phrase)?|pwd|secret|token|api[_-]?key|auth|credential|private[_-]?key|cookie|session)s?")
+PATH_KEY = re.compile(r"(?i)(path|file|filename|uri|url|target|dest|src)s?$")
 
 
 def params(tool, ti):
-    """The tool call's full parameters as structured JSON: secrets redacted, long strings capped,
-    and file bodies of sensitive paths dropped (their exact content already lives in NNNN.files)."""
-    sensitive = SENSITIVE_PATH.search(ti.get("file_path") or ti.get("notebook_path") or "")
+    """The tool call's full parameters as structured JSON. Anything under a secret-named key is redacted
+    whole; if any path-like value (at any depth) points at a sensitive file, every other string is dropped
+    (exact file content already lives in NNNN.files); remaining strings are redacted and capped."""
+    def paths(v, key=""):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                yield from paths(x, k)
+        elif isinstance(v, list):
+            for x in v:
+                yield from paths(x, key)
+        elif isinstance(v, str) and PATH_KEY.search(key):
+            yield v
+    sensitive = any(SENSITIVE_PATH.search(p) for p in paths(ti))
 
     def clean(v, key=""):
+        if key and SECRET_KEY.search(key):
+            return "<REDACTED>"
         if isinstance(v, dict):
             return {k: clean(x, k) for k, x in v.items()}
         if isinstance(v, list):
             return [clean(x, key) for x in v]
         if not isinstance(v, str):
             return v
-        if SECRET_KEY.search(key):
-            return "<REDACTED>"
-        if key in FILE_BODY_KEYS and sensitive:
+        if sensitive and not PATH_KEY.search(key):
             return f"<{len(v)} chars not logged>"
         s = redact(v)
         return s if len(s) <= PARAM_STR_MAX else s[:PARAM_STR_MAX] + f"…(+{len(s) - PARAM_STR_MAX} chars)"

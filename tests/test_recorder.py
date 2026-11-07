@@ -78,6 +78,15 @@ class TestHook(Store):
         self.assertLess(len(p["body"]), 2100)
         self.assertNotIn("hunter2", json.dumps(e2["params"]))
 
+    def test_params_redact_nested_secrets_and_nested_sensitive_paths(self):
+        self.hook("mcp__x__call", {"auth": {"user": "u", "pass": "p4ss"}, "api_tokens": ["t0k3n"],
+                                   "arguments": {"path": "/srv/.env", "body": "DB_PASS=hunter2"}})
+        (e,) = self.events()
+        dumped = json.dumps(e["params"])
+        for leak in ("p4ss", "t0k3n", "hunter2"):
+            self.assertNotIn(leak, dumped)
+        self.assertEqual(e["params"]["arguments"]["path"], "/srv/.env")
+
     def test_skipped_tools_not_logged(self):
         self.hook("Bash", {"command": "echo hi"})
         self.hook("TodoWrite", {"todos": []})

@@ -3,8 +3,9 @@
 ## Unreleased
 
 - Tool calls are recorded with their full parameters: each step in `sessions/NNNN.jsonl` carries a
-  structured `params` object (nested MCP/agent arguments included). Secrets and secret-named keys are
-  redacted, strings over 2000 chars are capped, and file bodies of sensitive paths are dropped.
+  structured `params` object (nested MCP/agent arguments included). Secrets are redacted, anything under a
+  secret-named key is redacted whole, strings over 2000 chars are capped, and when any path at any depth
+  points at a sensitive file, all non-path strings are dropped.
 - Auto sync: besides session start and end, tool calls sync in the background at most every
   `WF_SYNC_INTERVAL` seconds (default 300). Each sync pulls other machines' branches into read-only mirrors
   under `~/workflows/.machines/`; read them with `wf machines` and `wf --machine NAME|all list/show/search`.
