@@ -12,7 +12,7 @@ The SessionStart hook tells you the current number (e.g. `Session #0007`).
 
 Store: `~/workflows/<project>/` (outside the repo, secrets redacted)
 - `sessions/0007.sh` — commented log: step, time, category, status, description, `cd`, command
-- `sessions/0007.jsonl` — same data, machine-readable (source of truth)
+- `sessions/0007.jsonl` — same data, machine-readable (source of truth), plus each tool call's full `params` (redacted)
 - `workflows/<name>.sh` — extracted runnable workflows
 - `runs/<name>-<ts>.log` — output of `wf run`
 

@@ -65,6 +65,19 @@ class TestHook(Store):
         self.assertNotIn("sk-abcdefghijklmnopqrst", e["command"])
         self.assertEqual(e["command"].count("<REDACTED>"), 2)
 
+    def test_tool_params_recorded_structured_and_redacted(self):
+        ti = {"server": "gh", "query": {"repo": "a/b", "labels": ["bug", "ui"], "limit": 5},
+              "api_key": "plain-secret", "note": "use API_KEY=sk-abcdefghijklmnopqrst", "body": "x" * 5000}
+        self.hook("mcp__gh__search_issues", ti)
+        self.hook("Write", {"file_path": str(self.proj / ".env"), "content": "TOKEN=hunter2"})
+        e1, e2 = self.events()
+        p = e1["params"]
+        self.assertEqual(p["query"], {"repo": "a/b", "labels": ["bug", "ui"], "limit": 5})
+        self.assertEqual(p["api_key"], "<REDACTED>")
+        self.assertNotIn("sk-abcdefghijklmnopqrst", p["note"])
+        self.assertLess(len(p["body"]), 2100)
+        self.assertNotIn("hunter2", json.dumps(e2["params"]))
+
     def test_skipped_tools_not_logged(self):
         self.hook("Bash", {"command": "echo hi"})
         self.hook("TodoWrite", {"todos": []})

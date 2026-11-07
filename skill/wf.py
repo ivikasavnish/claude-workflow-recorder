@@ -285,6 +285,33 @@ INLINE_MAX_LINES = 80
 q = shlex.quote
 
 
+PARAM_STR_MAX = 2000
+SECRET_KEY = re.compile(r"(?i)(pass(word|wd)?|secret|token|api[_-]?key|auth(orization)?|credential|private[_-]?key|cookie)$")
+FILE_BODY_KEYS = {"content", "old_string", "new_string", "new_source"}
+
+
+def params(tool, ti):
+    """The tool call's full parameters as structured JSON: secrets redacted, long strings capped,
+    and file bodies of sensitive paths dropped (their exact content already lives in NNNN.files)."""
+    sensitive = SENSITIVE_PATH.search(ti.get("file_path") or ti.get("notebook_path") or "")
+
+    def clean(v, key=""):
+        if isinstance(v, dict):
+            return {k: clean(x, k) for k, x in v.items()}
+        if isinstance(v, list):
+            return [clean(x, key) for x in v]
+        if not isinstance(v, str):
+            return v
+        if SECRET_KEY.search(key):
+            return "<REDACTED>"
+        if key in FILE_BODY_KEYS and sensitive:
+            return f"<{len(v)} chars not logged>"
+        s = redact(v)
+        return s if len(s) <= PARAM_STR_MAX else s[:PARAM_STR_MAX] + f"…(+{len(s) - PARAM_STR_MAX} chars)"
+
+    return clean(ti)
+
+
 def comment(text):
     return "\n".join("# " + l for l in text.splitlines() or [""])
 
@@ -453,7 +480,7 @@ def hook():
     risk = assess(cmd_r)
     event = {"type": "cmd", "step": step, "ts": now(), "task": task, "category": cat, "status": status,
              "cwd": cwd, "description": desc, "command": cmd_r, "tool": ev.get("tool_name"),
-             "background": bool(ti.get("run_in_background")), "error": err_tail, **risk}
+             "params": params(ev.get("tool_name") or "", ti), "background": bool(ti.get("run_in_background")), "error": err_tail, **risk}
     text = f"\n# ── step {step} · {now('%H:%M:%S')} · [{cat}] · {status}" + (f" · task {task}" if task else "") + "\n"
     if desc:
         text += f"# {desc}\n"

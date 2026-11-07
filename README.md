@@ -92,7 +92,7 @@ Uninstall: `./uninstall.sh` (removes hooks, router registration and the `wf` lin
 Claude Code ──hooks──▶ wf.py hook ──▶ ~/workflows/<project>/
   SessionStart                         index.json            session uuid → #0001, #0002…
   PostToolUse(*)                       sessions/0002.sh      commented, human-readable log
-  PostToolUseFailure(*)                sessions/0002.jsonl   machine-readable (source of truth)
+  PostToolUseFailure(*)                sessions/0002.jsonl   machine-readable (source of truth), full tool params
                                        sessions/0002.files/  exact snapshots of large writes
                                        workflows/<name>.sh   extracted runnable workflows
                                        runs/<name>-….log     run output with step/exit markers
