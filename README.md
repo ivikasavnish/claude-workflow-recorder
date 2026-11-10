@@ -37,6 +37,14 @@ steps that worked into a workflow, so problem solving becomes small chunks you c
 Rerunning a saved workflow costs no tokens. Through MCP, agents can look up past steps and get back
 only the matches, not whole logs. The router shows an agent 4 tools instead of every server's full list.
 
+**Fixes get faster each time.** When a command fails and a few steps later passes, the steps in
+between are remembered as a fix. Next time the same error shows up, in a Claude session, a `wf run`
+or anywhere you run `wf fix`, that fix is suggested, or applied and verified. When memory has nothing,
+`wf fix` hands the failure to a local coding agent over **ACP** (Claude, Codex, Antigravity, Gemini; `muse`
+via its headless exec), along with the closest past fixes from every project. It keeps the change only if
+the command then passes. Every fix tracks wins and losses, so the good ones rise to the top and bad ones
+get retired.
+
 **Know what's safe to replay.** Every step is flagged if it's dangerous (`rm -rf`, force push, `sudo`,
 `curl | sh`, `terraform destroy`, publishes) or won't rerun cleanly (commits, pushes, appends, one-shot edits).
 Dangerous steps don't run until you approve them. These are heuristics, so still read what you run.
@@ -64,8 +72,9 @@ common secrets redacted. No telemetry, no service and no dependencies beyond Pyt
 |---|---|
 | **Recorder** (Claude Code hooks) | Logs every tool call as a commented bash step: `#0001`, `#0002`, … per project. Bash commands verbatim; Claude's own `Read`/`Grep`/`Glob`/`Write`/`Edit`/`WebFetch` as their shell equivalents; agents / MCP calls as comments. Failures keep their last error line. |
 | **`wf` CLI** | `list`, `show`, `search`, `mark` tasks, `note` findings, `extract` steps into a workflow, `run` it (all, one step, or a subset) in an isolated bash. |
-| **Workflows app** (macOS) | Viewer + runner UI: browse sessions, filter by category, pick steps across sessions → create a workflow, then **Run all / Run selected / ▶ Run** one step with live output and per-step status. |
+| **Workflows app** (macOS) | Viewer + runner UI: browse sessions, filter by category, pick steps across sessions → create a workflow, then **Run all / Run selected / ▶ Run** one step with live output and per-step status. Turn on **Fix failing steps** to have an ACP agent repair a failing step, approve its actions in the app, and follow it in the **Agent feed** and **ACP debug** tabs. **Agents** shows which agents are reachable or connected; **Fixes** shows what has been learned. |
 | **Workflows MCP server** | Lets any MCP client (Claude, Codex, Cursor…) search past steps and fetch only the relevant ones. |
+| **Fix memory + `wf fix`** | Learns failure → fix pairs from sessions; replays them on matching errors; otherwise asks a local agent over ACP (`claude-agent-acp`, `codex-acp`, `agy acp`, `gemini --experimental-acp`) or exec (`muse exec`), verifies, and remembers the patch. |
 | **MCP router** | One MCP server in front of many: clients see `search_tools` + `call_tool` instead of every server's full tool list; backends start lazily. |
 
 ![Runner](docs/runner.png)
@@ -139,6 +148,11 @@ wf run release --steps 2-4 -e API_TOKEN="$TOKEN"
 wf inspect release                        # parameters, dangerous and non-repeatable steps
 wf extract release --from 7 -P VERSION=1.2.3 --auto-params   # record values as {{VERSION}}, {{PROJECT_DIR}}
 wf run release -P VERSION=1.3.0 --allow-dangerous            # new value; approve flagged steps
+wf fix --last                             # fix the last failed step: remembered fixes, then a local agent
+wf fix --cmd "go test ./..." --agent codex
+wf run release --fix                      # fix failing steps as they happen, then continue
+wf fixes                                  # what the memory knows, with wins/losses
+wf agents                                 # ACP / exec agents found on this machine
 wf ui                                     # open the app
 ```
 

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -24,9 +25,14 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 import wf  # noqa: E402  (shared store/run helpers)
+import wf_acp  # noqa: E402
+import wf_fix  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
 RUNS = {}  # run id -> Run
+PROBES = {}  # agent name -> last handshake result
+MAX_EVENTS = 20000
+EVENT_PREFIX = wf_fix.EventStream.PREFIX
 NAME_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
 
 
@@ -52,25 +58,51 @@ def checked_name(name):
 # ---------------------------------------------------------------- runs
 
 class Run:
-    def __init__(self, project, name, script, chosen, log, env):
+    """A workflow run. Plain runs are a bash script (we write the log); fix runs are `wf run --fix --ui-events`
+    (it writes the log, and talks to us in ::wf-event lines and answers on stdin)."""
+
+    def __init__(self, project, name, script, chosen, log, env, argv=None, agent=None):
         self.id = secrets.token_hex(6)
-        self.project, self.name, self.log = project, name, log
+        self.project, self.name, self.log, self.agent = project, name, log, agent
         self.steps = [{"n": s["n"], "title": s["title"]} for s in chosen]
-        self.lines, self.rc, self.started, self.ended = [], None, time.time(), None
-        self.proc = subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-c", script], env=env,
+        self.lines, self.events, self.rc, self.started, self.ended = [], [], None, time.time(), None
+        self.fix = argv is not None
+        self.proc = subprocess.Popen(argv or ["/bin/bash", "--noprofile", "--norc", "-c", script], env=env,
+                                     stdin=subprocess.PIPE if self.fix else subprocess.DEVNULL,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                      start_new_session=True)
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _pump(self):
-        with open(self.log, "w") as f:
-            for line in self.proc.stdout:
-                self.lines.append(line.rstrip("\n"))
-                f.write(line)
+        f = None if self.fix else open(self.log, "w")
+        for line in self.proc.stdout:
+            line = line.rstrip("\n")
+            if line.startswith(EVENT_PREFIX):
+                try:
+                    ev = json.loads(line[len(EVENT_PREFIX):])
+                except ValueError:
+                    continue
+                ev["seq"], ev["t"] = len(self.events), time.time()
+                if ev.get("type") == "run" and ev.get("log"):
+                    self.log = self.log.with_name(ev["log"])
+                self.events.append(ev)
+                del self.events[:-MAX_EVENTS]
+                continue
+            self.lines.append(line)
+            if f:
+                f.write(line + "\n")
                 f.flush()
-            self.rc = self.proc.wait()
-            self.ended = time.time()
+        self.rc = self.proc.wait()
+        self.ended = time.time()
+        if f:
             f.write(f"\n::wf-exit {self.rc}\n")
+            f.close()
+
+    def answer(self, ask_id, answer):
+        if not self.fix or self.rc is not None:
+            raise ValueError("run is not waiting for an answer")
+        self.proc.stdin.write(json.dumps({"ask": int(ask_id), "answer": answer}) + "\n")
+        self.proc.stdin.flush()
 
     def stop(self):
         if self.rc is None:
@@ -78,8 +110,8 @@ class Run:
 
     def summary(self):
         return {"id": self.id, "project": self.project, "name": self.name, "steps": self.steps,
-                "rc": self.rc, "running": self.rc is None, "log": self.log.name,
-                "started": self.started, "ended": self.ended}
+                "rc": self.rc, "running": self.rc is None, "log": self.log.name, "fix": self.fix,
+                "agent": self.agent, "started": self.started, "ended": self.ended}
 
 
 # ---------------------------------------------------------------- API
@@ -156,8 +188,31 @@ def api_get(path, q):
         r = RUNS.get(g("id"))
         if not r:
             raise ValueError("unknown run")
-        since = int(g("since", "0"))
-        return {**r.summary(), "lines": r.lines[since:], "next": len(r.lines)}
+        since, esince = int(g("since", "0")), int(g("esince", "0"))
+        first = r.events[0]["seq"] if r.events else 0
+        evs = r.events[max(esince - first, 0):]
+        return {**r.summary(), "lines": r.lines[since:], "next": len(r.lines),
+                "events": evs, "enext": (evs[-1]["seq"] + 1) if evs else esince}
+    if path == "/api/agents":
+        default = wf_acp.default_agent()
+        live = {}
+        for r in RUNS.values():  # an agent is "connected" while a fix run has a live ACP session with it
+            if r.rc is None and r.fix:
+                for ev in r.events:
+                    if ev["type"] in ("agent_start", "agent_end"):
+                        live[ev["agent"]] = (ev["type"] == "agent_start") and {"run": r.id, "workflow": r.name}
+        out = []
+        for name, d in wf_acp.agents().items():
+            res = wf_acp.resolve(name)
+            out.append({"name": name, "default": name == default, "available": bool(res),
+                        "transport": res and res["transport"], "argv": res and res["argv"],
+                        "via_npx": bool(res and res.get("via_npx")), "probe": PROBES.get(name),
+                        "connected": live.get(name) or None,
+                        "acp": d.get("acp"), "npx": d.get("npx"), "exec": d.get("exec")})
+        return {"agents": out, "config": str(wf_acp.config_path())}
+    if path == "/api/fixes":
+        homes = wf_fix.projects() if g("all") else [pdir_of(g("project"))]
+        return [{**fx, "project": h.name} for h in homes for fx in reversed(wf_fix.load(h))]
     raise LookupError(path)
 
 
@@ -188,15 +243,58 @@ def api_post(path, b):
         p = pdir_of(b.get("project"))
         only = set(int(x) for x in b["steps"]) if b.get("steps") else None
         params = wf.parse_kv(l.strip() for l in (b.get("params") or "").splitlines() if l.strip())
-        script, chosen, log = wf.prepare_run(p, checked_name(b.get("name")), only, params, b.get("allow_dangerous") is True)
+        name = checked_name(b.get("name"))
+        script, chosen, log = wf.prepare_run(p, name, only, params, b.get("allow_dangerous") is True)
         extra = {}
         for line in (b.get("env") or "").splitlines():
             k, sep, v = line.strip().partition("=")
             if sep and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k):
                 extra[k] = v
-        run = Run(p.name, b["name"], script, chosen, log, wf.isolated_env(extra, bool(b.get("inherit_env"))))
+        argv = agent = None
+        if b.get("fix"):
+            agent = b.get("agent") or wf_acp.default_agent() or "none"
+            if agent != "none" and agent not in wf_acp.agents():
+                raise ValueError(f"unknown agent '{agent}'")
+            argv = [sys.executable, str(HERE.parent / "wf.py"), "-p", p.name, "run", name, "--fix", "--ui-events",
+                    "--agent", agent, "--attempts", str(int(b.get("attempts") or 2))]
+            if only:
+                argv += ["--steps", ",".join(str(n) for n in sorted(only))]
+            for kv in params.items():
+                argv += ["-P", "=".join(kv)]
+            for kv in extra.items():
+                argv += ["-e", "=".join(kv)]
+            argv += ["--inherit-env"] if b.get("inherit_env") else []
+            argv += ["--allow-dangerous"] if b.get("allow_dangerous") is True else []
+            argv += ["--yes"] if b.get("auto_approve") is True else []
+            argv += ["--no-memory"] if b.get("no_memory") is True else []
+        env = dict(os.environ) if argv else wf.isolated_env(extra, bool(b.get("inherit_env")))
+        run = Run(p.name, name, script, chosen, log, env, argv=argv, agent=agent)
         RUNS[run.id] = run
         return run.summary()
+    if path == "/api/run/answer":
+        r = RUNS.get(b.get("id"))
+        if not r:
+            raise ValueError("unknown run")
+        if b.get("answer") not in ("y", "a", "n"):
+            raise ValueError("answer must be y, a or n")
+        r.answer(b.get("ask"), b["answer"])
+        return {"ok": True}
+    if path == "/api/agents/probe":
+        name = b.get("name")
+        res = wf_acp.resolve(name) if name in wf_acp.agents() else None
+        if not res:
+            raise ValueError(f"agent '{name}' is not available here")
+        if res["transport"] != "acp":
+            PROBES[name] = {"ok": shutil.which(res["argv"][0]) is not None, "ms": 0, "exec": True, "t": time.time(),
+                            "error": None if shutil.which(res["argv"][0]) else "not on PATH"}
+        else:
+            PROBES[name] = {**wf_acp.probe(res, timeout=int(b.get("timeout") or 120)), "t": time.time()}
+        return PROBES[name]
+    if path == "/api/fixes/forget":
+        p = pdir_of(b.get("project"))
+        if not wf_fix.forget(p, str(b.get("id"))):
+            raise ValueError("no such fix")
+        return {"ok": True}
     if path == "/api/run/stop":
         r = RUNS.get(b.get("id"))
         if r:

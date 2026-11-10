@@ -501,6 +501,23 @@ def hook():
         text += f"cd {shlex.quote(cwd)}\n"
     text += cmd_r + "\n"
     append(pdir, n, event, text)
+    fix_memory(pdir, n, events + [event], name, cmd_r, cat, err)
+
+
+def fix_memory(pdir, n, events, hook_name, cmd, cat, err):
+    """Learn failure -> fix pairs as they happen, and tell Claude when a failure matches one that worked before."""
+    if os.environ.get("WF_FIX_MEMORY", "1") == "0" or cat in ("find", "note", "edit"):
+        return
+    try:
+        import wf_fix
+        if hook_name == "PostToolUseFailure":
+            hint = wf_fix.hook_hint(pdir, cmd, err)
+            if hint:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "additionalContext": hint}}))
+        else:
+            wf_fix.hook_learn(pdir, n, events)
+    except Exception as ex:  # memory is a bonus; never break recording
+        print(f"[workflow-recorder] fix memory: {ex}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------- sync: private git, a branch per machine
@@ -1095,6 +1112,12 @@ def cmd_run(a):
     for s in chosen:
         for why in assess(s["body"])["once"]:
             print(f"wf: warning: step {s['n']} may not rerun cleanly: {why}", file=sys.stderr)
+    if a.fix:
+        import wf_fix
+        opts = fix_options(a, env)
+        print(f"running {a.name} steps {','.join(str(s['n']) for s in chosen)} one at a time, fixing failures (log -> {log})")
+        opts.emit("run", name=a.name, log=log.name, steps=[s["n"] for s in chosen])
+        sys.exit(wf_fix.run_with_fix(pdir, a.name, chosen, env, log, opts, out=sys.stdout))
     print(f"running {a.name} steps {','.join(str(s['n']) for s in chosen)} (isolated env, log -> {log})")
     with open(log, "w") as f:
         proc = subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-c", script], env=env,
@@ -1108,6 +1131,86 @@ def cmd_run(a):
     sys.exit(rc)
 
 
+def fix_options(a, env=None):
+    import wf_fix
+    o = wf_fix.Options(agent=a.agent, transport=a.transport, yes=a.yes, memory=not a.no_memory,
+                       attempts=a.attempts, allow_dangerous=a.allow_dangerous, timeout=a.timeout, env=env)
+    if a.ui_events:  # driven by the Workflows app: events + questions over stdio
+        stream = wf_fix.EventStream()
+        sys.stdout = stream
+        o.ask, o.emit = stream.ask, stream.emit
+    return o
+
+
+def cmd_fix(a):
+    import wf_fix
+    pdir = project_dir(name=a.project)
+    if a.last or not a.cmd:
+        n = resolve_session(pdir, a.session)
+        failed = [e for e in load(pdir, n) if e["type"] == "cmd" and e["status"] == "FAILED"
+                  and e["category"] not in wf_fix.SKIP_CATS]
+        if not failed:
+            sys.exit(f"wf: no failed command in session #{n:04d} (pass --cmd to fix any command)")
+        e = failed[-1]
+        command, cwd = e["command"], a.cwd or e["cwd"]
+        print(f"wf fix: session #{n:04d} step {e['step']}: {e['description'] or first_line(command)}")
+    else:
+        command, cwd = a.cmd, a.cwd or os.getcwd()
+    if "<REDACTED>" in command:
+        sys.exit("wf: the command contains <REDACTED>; pass it with --cmd and real values (or $VARS)")
+    if assess(command)["danger"] and not a.allow_dangerous:
+        sys.exit("wf: the command itself is flagged dangerous; rerun with --allow-dangerous if you mean it")
+    sys.exit(0 if wf_fix.fix_command(pdir, command, cwd, fix_options(a)) else 1)
+
+
+def first_line(cmd):
+    return (cmd.strip().splitlines() or [""])[0][:120]
+
+
+def cmd_fixes(a):
+    import wf_fix
+    pdir = project_dir(name=a.project)
+    homes = wf_fix.projects() if a.all else [pdir]
+    if a.action == "forget":
+        sys.exit(0 if wf_fix.forget(pdir, a.id) else f"wf: no fix {a.id} in {pdir.name}")
+    for home in homes:
+        for fx in wf_fix.load(home):
+            if a.action == "show":
+                if fx["id"].startswith(a.id or "~"):
+                    print(json.dumps(fx, indent=1, ensure_ascii=False))
+                continue
+            print(("" if len(homes) == 1 else f"{home.name}: ") + wf_fix.describe(fx, 70))
+            if fx.get("error"):
+                print(f"      error: {fx['error'][:120]}")
+
+
+def cmd_learn(a):
+    import wf_fix
+    pdir = project_dir(name=a.project)
+    sessions = sorted({n for sel in a.sources for n, _ in parse_selector(pdir, sel)})
+    new = sum(wf_fix.learn_session(pdir, n) for n in sessions)
+    print(f"learned {new} new fix(es) from {len(sessions)} session(s); {len(wf_fix.load(pdir))} known in {pdir.name}")
+
+
+def cmd_agents(a):
+    import wf_acp
+    default = wf_acp.default_agent()
+    for name, transport, how in wf_acp.describe():
+        print(f"{'*' if name == default else ' '} {name:<12} {transport:<5} {how}")
+    print(f"\n* = default.  Add or override agents in {wf_acp.config_path()}")
+
+
+def add_fix_args(p):
+    p.add_argument("--agent", help="agent to ask when memory has no fix (see `wf agents`; 'none' = memory only)")
+    p.add_argument("--transport", choices=["acp", "exec"], help="force ACP or one-shot exec")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="apply remembered fixes and approve agent tool calls without asking (dangerous ones are still refused)")
+    p.add_argument("--no-memory", action="store_true", help="skip remembered fixes, go straight to the agent")
+    p.add_argument("--attempts", type=int, default=2, help="agent attempts (default 2)")
+    p.add_argument("--timeout", type=int, default=900, help="seconds per agent attempt (default 900)")
+    p.add_argument("--ui-events", action="store_true", help=argparse.SUPPRESS)
+
+
 def cmd_ui(a):
     app = HOME / "Applications" / "Workflows.app"
     subprocess.run(["open", str(app)] if app.exists() else
@@ -1115,6 +1218,10 @@ def cmd_ui(a):
 
 
 def main():
+    # wf_fix / wf_acp sit next to this file (also when run through the ~/.local/bin/wf symlink) and import us
+    # as `wf`: hand them this module rather than a second copy.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.modules.setdefault("wf", sys.modules[__name__])
     if len(sys.argv) > 1 and sys.argv[1] == "hook":
         try:
             hook()
@@ -1164,7 +1271,26 @@ def main():
     p.add_argument("--inherit-env", action="store_true", help="pass the full current environment")
     p.add_argument("-P", "--param", action="append", metavar="NAME=VALUE", help="override a workflow parameter")
     p.add_argument("--allow-dangerous", action="store_true", help="run steps flagged dangerous")
+    p.add_argument("--fix", action="store_true", help="on a failing step, apply a remembered fix or ask an agent, then continue")
+    add_fix_args(p)
     p.set_defaults(fn=cmd_run)
+    p = sub.add_parser("fix", help="make a failing command pass: remembered fixes first, then a local agent (ACP)")
+    p.add_argument("--cmd", help="command to fix (default: the last failed step of the session)")
+    p.add_argument("--last", action="store_true", help="fix the last failed step of the session")
+    p.add_argument("-s", "--session", help="session for --last (default: latest)")
+    p.add_argument("--cwd", help="directory to run it in")
+    p.add_argument("--allow-dangerous", action="store_true", help="allow dangerous commands and fix steps")
+    add_fix_args(p)
+    p.set_defaults(fn=cmd_fix)
+    p = sub.add_parser("fixes", help="list, show or forget remembered fixes")
+    p.add_argument("action", nargs="?", choices=["list", "show", "forget"], default="list")
+    p.add_argument("id", nargs="?")
+    p.add_argument("--all", action="store_true", help="every project's fixes")
+    p.set_defaults(fn=cmd_fixes)
+    p = sub.add_parser("learn", help="learn failure -> fix pairs from recorded sessions")
+    p.add_argument("sources", nargs="*", default=["all"], metavar="SEL", help="sessions (default: all)")
+    p.set_defaults(fn=cmd_learn)
+    sub.add_parser("agents", help="local coding agents wf fix can use, and how (ACP or exec)").set_defaults(fn=cmd_agents)
     sub.add_parser("ui", help="open the Workflows app (viewer + runner)").set_defaults(fn=cmd_ui)
     p = sub.add_parser("sync", help="commit ~/workflows and push it to a private repo, on this machine's branch")
     p.add_argument("--init", action="store_true", help="make the store a git repo first")
@@ -1182,7 +1308,7 @@ def main():
     a.fn(a)
 
 
-READ_ONLY_CMDS = ("status", "list", "show", "search", "workflows", "inspect")
+READ_ONLY_CMDS = ("status", "list", "show", "search", "workflows", "inspect", "fixes")
 
 
 def on_machines(a):

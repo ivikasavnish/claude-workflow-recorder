@@ -38,7 +38,8 @@ header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; backg
 header h1 { font-size: 14px; margin: 0 6px 0 0; letter-spacing: .2px; }
 header .search { flex: 1; max-width: 520px; }
 header .search input { width: 100%; }
-header .store { margin-left: auto; color: var(--muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
+header .agentbtn { margin-left: auto; }
+header .store { color: var(--muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
 .title .meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .layout { flex: 1; display: flex; min-height: 0; }
@@ -91,6 +92,39 @@ main { flex: 1; overflow: auto; min-width: 0; display: flex; flex-direction: col
 .envbox { display: none; margin: 8px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .envbox.open { display: block; }
 .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.agentbtn { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dot.live { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+.ctabs { display: flex; gap: 2px; }
+.ctabs button { border: 0; background: none; padding: 2px 8px; color: var(--muted); border-radius: 4px; }
+.ctabs button.on { background: var(--sel); color: var(--text); }
+.feed { padding: 8px 10px; max-height: 460px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.fe { border-left: 3px solid var(--line); padding: 3px 8px; }
+.fe .fh { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.fe .ft { color: var(--muted); font-size: 11px; margin-left: auto; }
+.fe.ok { border-color: var(--ok); } .fe.bad { border-color: var(--bad); } .fe.agent { border-color: var(--accent); }
+.fe.tool { border-color: var(--c-build); } .fe.ask { border-color: var(--warn); background: var(--panel); }
+.fe .say { white-space: pre-wrap; word-break: break-word; }
+.fe .say.thought { color: var(--muted); font-style: italic; }
+.fe pre, .rpc pre { margin: 4px 0 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.asks { position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.askcard { border: 1px solid var(--warn); background: var(--panel); border-radius: 8px; padding: 8px 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.askcard .q { flex: 1; min-width: 200px; }
+.askcard .q .mono { color: var(--muted); display: block; max-height: 4.5em; overflow: hidden; word-break: break-all; }
+.rpc { padding: 6px 10px; max-height: 460px; overflow: auto; }
+.rpc .r { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.rpc .r .dir { font-weight: 700; } .rpc .r .dir.out { color: var(--accent); } .rpc .r .dir.in { color: var(--ok); }
+.rpc .r .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; margin-top: 10px; }
+.card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.card .ch { display: flex; gap: 8px; align-items: center; }
+.card .ch b { font-size: 14px; }
+.kv { display: grid; grid-template-columns: 92px 1fr; gap: 2px 8px; font-size: 12px; }
+.kv > :nth-child(odd) { color: var(--muted); }
+.fixbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; margin: 6px 0 10px; }
+.st.fixing { color: var(--warn); } .st.fixed { color: var(--ok); }
+.logline.rpcline { color: var(--muted); }
 .toast { position: fixed; right: 16px; bottom: 16px; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 420px; }
 .toast.show { opacity: .95; }
 @media (max-width: 760px) {
@@ -106,6 +140,7 @@ main { flex: 1; overflow: auto; min-width: 0; display: flex; flex-direction: col
   <h1>Workflows</h1>
   <select id="project" title="Project"></select>
   <div class="search"><input id="q" type="search" placeholder="Search steps in this project (command or description)…"></div>
+  <button class="agentbtn" id="agentsBtn" title="Local coding agents (ACP)"><span class="dot" style="background:var(--muted)"></span><span>Agents</span></button>
   <span class="store mono" id="store" title="__WF_ROOT__"></span>
 </header>
 <div class="layout">
@@ -114,6 +149,7 @@ main { flex: 1; overflow: auto; min-width: 0; display: flex; flex-direction: col
       <button data-tab="sessions">Sessions</button>
       <button data-tab="workflows">Workflows</button>
       <button data-tab="runs">Runs</button>
+      <button data-tab="fixes">Fixes</button>
     </div>
     <div class="list" id="list"></div>
   </aside>
@@ -126,7 +162,10 @@ const HOMEDIR = "__WF_HOMEDIR__";
 // display only: copy buttons and runs always use the real text
 const tilde = (s) => (s || "").split(HOMEDIR + "/").join("~/");
 const CATS = ["find", "debug", "test", "build", "run", "git", "edit", "note", "other"];
-const S = { project: null, tab: "sessions", view: null, sel: new Map(), cats: new Set(), hideFailed: false, run: null, poll: null };
+const S = { project: null, tab: "sessions", view: null, sel: new Map(), cats: new Set(), hideFailed: false, run: null, poll: null,
+  agents: [], fix: { agent: "off", auto: false } };
+try { Object.assign(S.fix, JSON.parse(localStorage.getItem("wf.fix") || "{}")); } catch (e) {}
+const saveFix = () => { try { localStorage.setItem("wf.fix", JSON.stringify(S.fix)); } catch (e) {} };
 
 // ---------- helpers
 function h(tag, attrs, ...kids) {
@@ -191,6 +230,14 @@ async function renderList() {
       list.replaceChildren(...(ws.length ? ws.map((w) => h("div", { class: "item" + (S.view?.kind === "workflow" && S.view.name === w.name ? " on" : ""), onclick: () => openWorkflow(w.name) },
         h("div", { class: "t" }, w.name), h("div", { class: "s" }, `${w.steps} steps · ${w.description}`)))
         : [h("div", { class: "item s" }, "No workflows yet — select steps in a session and click Create workflow.")]));
+    } else if (S.tab === "fixes") {
+      const fs = await get("/api/fixes", { project: S.project });
+      list.replaceChildren(...(fs.length ? fs.map((f) => h("div", { class: "item" + (S.view?.kind === "fix" && S.view.fix.id === f.id ? " on" : ""), onclick: () => openFix(f) },
+        h("div", { class: "t" }, h("span", { class: "pill", style: "color:var(--accent)" }, f.kind), h("span", { class: "mono" }, f.id),
+          h("span", { class: "s", style: "margin-left:auto" }, `${f.wins || 0}✓ ${f.losses || 0}✗`)),
+        h("div", { class: "s" }, f.error || "(no error text)"),
+        h("div", { class: "s" }, `${f.origin} · ${f.source}`)))
+        : [h("div", { class: "item s" }, "No fixes yet. They are learned when a failed command passes after a change, or when wf fix / Run with fix succeeds.")]));
     } else {
       const rs = await get("/api/runs", { project: S.project });
       list.replaceChildren(...(rs.length ? rs.map((r) => h("div", { class: "item" + (S.view?.kind === "log" && S.view.file === r.file ? " on" : ""), onclick: () => openLog(r) },
@@ -323,10 +370,52 @@ function renderWorkflow() {
       h("button", { onclick: () => { v.envOpen = !v.envOpen; rerender(); } }, "Environment"),
       h("button", { onclick: () => { v.editing = true; rerender(); } }, "Edit"),
       h("button", { onclick: () => copy(w.script) }, "Copy script")),
+    fixBar(running),
     h("div", { class: "envbox" + (envOpen ? " open" : "") },
       h("div", { class: "meta", style: "margin-bottom:6px" }, "Runs use a clean bash (no profile/rc) with HOME, PATH, USER, TERM, LANG, JAVA_HOME, ANDROID_HOME. Add variables here:"),
       envTa, h("label", {}, inherit, " inherit the app's full environment")),
-    ...rows, consoleBox());
+    ...rows, asksBox(), consoleBox());
+}
+function fixBar(running) {
+  const opts = [h("option", { value: "off" }, "Off — just run"), h("option", { value: "none" }, "Fix memory only (no agent)"),
+    ...S.agents.filter((a) => a.available).map((a) => h("option", { value: a.name }, `${a.name} (${a.transport === "acp" ? "ACP" : "exec"})${a.default ? " — default" : ""}`))];
+  const sel = h("select", { disabled: running, onchange: (e) => { S.fix.agent = e.target.value; saveFix(); rerender(); } }, ...opts);
+  sel.value = [...sel.options].some((o) => o.value === S.fix.agent) ? S.fix.agent : "off";
+  const auto = h("input", { type: "checkbox", disabled: running || sel.value === "off", checked: S.fix.auto, onchange: (e) => { S.fix.auto = e.target.checked; saveFix(); } });
+  const agent = S.agents.find((a) => a.name === sel.value);
+  return h("div", { class: "fixbar" }, h("b", {}, "Fix failing steps"), sel,
+    h("label", { title: "Apply remembered fixes and allow the agent's tool calls without asking. Dangerous commands are still refused." }, auto, " auto-approve safe actions"),
+    agent ? agentStatus(agent) : null,
+    h("span", { class: "meta" }, sel.value === "off" ? "A failing step stops the run." :
+      "On a failing step: try remembered fixes, then ask the agent, re-run the step to verify, remember what worked, continue."));
+}
+function agentStatus(a) {
+  const live = a.connected, p = a.probe;
+  const [color, text] = live ? ["var(--ok)", `connected · ${live.workflow}`] : p ? (p.ok ? ["var(--ok)", `reachable${p.protocol ? ` · ACP v${p.protocol}` : ""}`] : ["var(--bad)", "unreachable"]) : ["var(--muted)", "not tested"];
+  return h("span", { class: "meta", style: "display:inline-flex;gap:5px;align-items:center", title: p?.error || "" }, h("span", { class: "dot" + (live ? " live" : ""), style: `background:${color}` }), text);
+}
+function pendingAsks(v) {
+  const asks = new Map();
+  for (const e of v.events || []) { if (e.type === "ask") asks.set(e.id, e); else if (e.type === "answered") asks.delete(e.id); }
+  return [...asks.values()].filter((a) => !v.answered?.has(a.id));
+}
+function asksBox() {
+  const v = S.view, r = S.run;
+  if (!r || r.name !== v.name || !r.running) return null;
+  const asks = pendingAsks(v);
+  if (!asks.length) return null;
+  return h("div", { class: "asks" }, ...asks.map((a) => h("div", { class: "askcard" },
+    h("div", { class: "q" }, h("b", {}, a.kind === "confirm" ? "Apply remembered fix? " : `${r.agent || "Agent"} asks: `), a.title || "",
+      a.danger?.length ? h("span", { class: "st failed" }, ` dangerous: ${a.danger.join("; ")}`) : null,
+      a.detail ? h("span", { class: "mono" }, tilde(a.detail)) : null),
+    h("button", { class: "primary", onclick: () => answer(a, "y") }, "Allow"),
+    a.kind === "permission" && !a.danger?.length ? h("button", { onclick: () => answer(a, "a"), title: `Allow every ${a.group} call for this run` }, "Always") : null,
+    h("button", { class: "danger", onclick: () => answer(a, "n") }, "Deny"))));
+}
+async function answer(a, ans) {
+  const v = S.view;
+  (v.answered = v.answered || new Set()).add(a.id); rerender();
+  try { await post("/api/run/answer", { id: S.run.id, ask: a.id, answer: ans }); } catch (e) { v.answered.delete(a.id); fail(e); }
 }
 function consoleBox() {
   const r = S.run;
@@ -337,14 +426,101 @@ function consoleBox() {
     pre.append(m ? h("span", { class: "mark" }, `── step ${m[1]} ──\n`) : line + "\n");
   }
   const status = r.running ? h("span", { class: "st running" }, "running") : h("span", { class: "st " + (r.rc === 0 ? "ok" : "failed") }, r.rc === 0 ? "finished ok" : `failed (exit ${r.rc})`);
-  setTimeout(() => { const o = $("#out"); if (o) o.scrollTop = o.scrollHeight; });
-  return h("div", { class: "console" }, h("div", { class: "ch" }, h("b", {}, "Output"), status, h("span", { class: "meta mono", style: "margin-left:auto" }, r.log)), pre);
+  const v = S.view, tab = r.fix ? (v.ctab || "output") : "output";
+  const evs = v.events || [], rpcs = evs.filter((e) => e.type === "rpc");
+  const live = v.agentLive;
+  const tabs = r.fix ? h("div", { class: "ctabs" },
+    ...[["output", "Output"], ["feed", `Agent feed (${evs.length - rpcs.length})`], ["debug", `ACP debug (${rpcs.length})`]].map(([k, label]) =>
+      h("button", { class: tab === k ? "on" : "", onclick: () => { v.ctab = k; v.hold = null; rerender(); } }, label))) : h("b", {}, "Output");
+  const body = tab === "feed" ? feedView(evs) : tab === "debug" ? rpcView(rpcs) : pre;
+  pre.addEventListener("scroll", holdScroll);
+  setTimeout(() => { const o = $("#out"); if (o) o.scrollTop = v.hold != null ? v.hold : o.scrollHeight; });
+  return h("div", { class: "console" }, h("div", { class: "ch" }, tabs, status,
+    live ? h("span", { class: "meta", style: "display:inline-flex;gap:5px;align-items:center" }, h("span", { class: "dot live", style: "background:var(--ok)" }), `${live} connected over ACP`) : null,
+    h("span", { class: "meta mono", style: "margin-left:auto" }, r.log)), body);
+}
+// keep the reader's place while output streams in; follow the tail again once they scroll back to the bottom
+function holdScroll(ev) { const o = ev.target; S.view.hold = o.scrollTop + o.clientHeight < o.scrollHeight - 30 ? o.scrollTop : null; }
+const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function fe(cls, head, t, ...body) { return h("div", { class: "fe " + cls }, h("div", { class: "fh" }, ...[head].flat(), h("span", { class: "ft" }, clock(t))), ...body); }
+function feedView(evs) {
+  const out = [], tools = new Map();
+  let say = null;
+  for (const e of evs) {
+    if (e.type === "rpc") continue;
+    if (e.type === "agent_text") {
+      if (say && say.thought === !!e.thought) { say.el.textContent += e.text; continue; }
+      const el = h("div", { class: "say" + (e.thought ? " thought" : "") }, e.text);
+      say = { thought: !!e.thought, el }; out.push(fe("agent", h("b", {}, e.thought ? "thinking" : "agent"), e.t, el)); continue;
+    }
+    say = null;
+    if (e.type === "tool") {
+      const known = tools.get(e.call);
+      const st = e.status || "pending";
+      if (known) { known.st.textContent = st; known.st.className = "st " + (st === "completed" ? "ok" : st === "failed" ? "failed" : "running"); if (e.title) known.title.textContent = e.title; continue; }
+      const stEl = h("span", { class: "st running" }, st), titleEl = h("span", {}, e.title || e.tool_kind || "tool");
+      tools.set(e.call, { st: stEl, title: titleEl });
+      out.push(fe("tool", ["→", titleEl, e.tool_kind ? h("span", { class: "pill" }, e.tool_kind) : null, stEl], e.t,
+        e.input ? h("details", {}, h("summary", {}, "input"), h("pre", {}, tilde(e.input))) : null));
+      continue;
+    }
+    const F = {
+      run: () => fe("", h("b", {}, `Run started: steps ${e.steps.join(", ")}`), e.t),
+      step_failed: () => fe("bad", [h("b", {}, `Step ${e.step} failed`), `exit ${e.rc}`], e.t, e.error ? h("div", { class: "mono" }, tilde(e.error)) : null),
+      memory: () => fe(e.blocked ? "" : "ok", [h("b", {}, "Remembered fix"), h("span", { class: "mono" }, e.id), `match ${e.score.toFixed(2)}`, e.blocked ? h("span", { class: "meta" }, `not applied: ${e.blocked}`) : null], e.t, h("div", { class: "mono" }, tilde(e.describe))),
+      memory_failed: () => fe("bad", [h("b", {}, `Remembered fix ${e.id} didn't work`), "(counted as a loss, undone if it was a patch)"], e.t),
+      agent_start: () => fe("agent", [h("b", {}, `Asking ${e.agent}`), h("span", { class: "pill" }, e.transport.toUpperCase()), `attempt ${e.attempt}/${e.attempts}`], e.t,
+        h("details", {}, h("summary", {}, "prompt sent"), h("pre", {}, tilde(e.prompt))), h("div", { class: "meta mono" }, e.argv.join(" "))),
+      connected: () => fe("agent", [h("b", {}, "Connected"), e.protocol ? `ACP v${e.protocol}` : null, e.agent_info?.name ? `${e.agent_info.name} ${e.agent_info.version || ""}` : null], e.t),
+      plan: () => fe("agent", h("b", {}, "Plan"), e.t, h("ul", { style: "margin:4px 0;padding-left:18px" }, ...e.entries.map((x) => h("li", {}, x.content, x.status ? h("span", { class: "meta" }, ` (${x.status})`) : null)))),
+      wrote: () => fe("tool", [h("b", {}, "Wrote"), h("span", { class: "mono" }, e.path)], e.t),
+      ask: () => fe("ask", [h("b", {}, e.kind === "confirm" ? "Asked to apply a remembered fix" : "Permission requested"), e.title || ""], e.t, e.detail ? h("div", { class: "mono" }, tilde(e.detail).slice(0, 400)) : null),
+      answered: () => fe(e.answer === "n" || !e.answer ? "bad" : "ok", h("b", {}, { y: "Allowed", a: "Allowed (always)", n: "Denied" }[e.answer] || "No answer (denied)"), e.t),
+      agent_end: () => fe(e.ok ? "agent" : "bad", [h("b", {}, `${e.agent} finished`), e.stop ? `stop: ${e.stop}` : null], e.t),
+      verify: () => fe(e.rc === 0 ? "ok" : "bad", h("b", {}, `Re-ran the step: ${e.rc === 0 ? "passes" : `still fails (exit ${e.rc})`}`), e.t),
+      fixed: () => fe("ok", [h("b", {}, `Fixed by ${e.by}`), e.id ? h("span", { class: "mono" }, `fix ${e.id}`) : null, e.kind ? `remembered as ${e.kind}` : null], e.t,
+        e.replacement ? h("div", { class: "mono" }, "working command: " + tilde(e.replacement)) : null,
+        e.patch ? h("details", { open: true }, h("summary", {}, "change"), h("pre", {}, tilde(e.patch))) : null),
+      step_fixed: () => fe("ok", h("b", {}, `Step ${e.step} fixed, continuing`), e.t),
+      not_fixed: () => fe("bad", h("b", {}, "Not fixed — any agent changes are left in place for review"), e.t),
+    }[e.type];
+    if (F) out.push(F());
+  }
+  const box = h("div", { class: "feed", id: "out", onscroll: holdScroll },
+    ...(out.length ? out : [h("div", { class: "meta" }, "Nothing yet. Events appear here when a step fails: remembered fixes, the agent's messages, tool calls, permission requests and verification.")]));
+  return box;
+}
+function rpcLabel(raw) {
+  try {
+    const m = JSON.parse(raw);
+    if (m.method === "session/update") { const u = m.params?.update || {}; return `session/update · ${u.sessionUpdate}${u.title ? " · " + u.title : ""}${u.status ? " · " + u.status : ""}`; }
+    if (m.method) return `${m.method}${m.id != null ? ` #${m.id}` : ""}`;
+    return `${m.error ? "error" : "result"} #${m.id}${m.error ? " · " + (m.error.message || "") : ""}`;
+  } catch (e) { return raw.slice(0, 120); }
+}
+function rpcView(rpcs) {
+  const v = S.view; v.rpcOpen = v.rpcOpen || new Set();
+  const flt = (v.rpcFilter || "").toLowerCase();
+  const input = h("input", { type: "search", placeholder: "filter (e.g. permission, fs/, tool_call)", value: v.rpcFilter || "", style: "width:100%;margin-bottom:6px",
+    oninput: (e) => { v.rpcFilter = e.target.value; clearTimeout(v._rf); v._rf = setTimeout(() => { rerender(); const i = document.querySelector(".rpc input"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 200); } });
+  const rows = rpcs.filter((e) => !flt || e.msg.toLowerCase().includes(flt)).slice(-1500).map((e) => {
+    const open = v.rpcOpen.has(e.seq);
+    let pretty = e.msg; if (open) try { pretty = JSON.stringify(JSON.parse(e.msg), null, 1); } catch (x) {}
+    return h("div", {}, h("div", { class: "r", onclick: () => { open ? v.rpcOpen.delete(e.seq) : v.rpcOpen.add(e.seq); rerender(); } },
+      h("span", { class: "dir " + e.dir, title: e.dir === "out" ? "wf → agent" : "agent → wf" }, e.dir === "out" ? "→" : "←"),
+      h("span", { class: "lbl mono" }, rpcLabel(e.msg)), h("span", { class: "meta" }, clock(e.t))),
+      open ? h("pre", { class: "mono" }, tilde(pretty)) : null);
+  });
+  return h("div", { class: "rpc", id: "out", onscroll: holdScroll }, input,
+    ...(rows.length ? rows : [h("div", { class: "meta" }, "No JSON-RPC traffic yet. It appears once an ACP agent is started for a failing step.")]));
 }
 async function startRun(steps) {
   const v = S.view;
   try {
-    const r = await post("/api/run", { project: S.project, name: v.name, steps, env: v.env || "", inherit_env: !!v.inherit, params: v.params || "", allow_dangerous: !!v.allowDanger });
-    S.run = { ...r, since: 0 }; v.lines = []; v.state = {}; v.allowDanger = false;
+    const fix = S.fix.agent !== "off";
+    const r = await post("/api/run", { project: S.project, name: v.name, steps, env: v.env || "", inherit_env: !!v.inherit, params: v.params || "", allow_dangerous: !!v.allowDanger,
+      fix, agent: fix ? S.fix.agent : undefined, auto_approve: fix && S.fix.auto });
+    S.run = { ...r, since: 0, esince: 0 }; v.lines = []; v.state = {}; v.allowDanger = false; v.events = []; v.answered = new Set(); v.agentLive = null; v.ctab = fix ? "feed" : "output"; v.hold = null;
     for (const s of r.steps) v.state[s.n] = "pending";
     rerender(); poll();
   } catch (e) { fail(e); }
@@ -354,8 +530,8 @@ async function poll() {
   stopPoll();
   const r = S.run; if (!r) return;
   try {
-    const d = await get("/api/run", { id: r.id, since: r.since });
-    Object.assign(r, d, { since: d.next });
+    const d = await get("/api/run", { id: r.id, since: r.since, esince: r.esince || 0 });
+    Object.assign(r, d, { since: d.next, esince: d.enext });
     if (S.view?.kind === "workflow" && S.view.name === r.name) {
       const v = S.view;
       for (const line of d.lines) {
@@ -363,8 +539,15 @@ async function poll() {
         const m = line.match(/^::wf-step (\d+)$/);
         if (m) { for (const k in v.state) if (v.state[k] === "running") v.state[k] = "ok"; v.state[m[1]] = "running"; }
       }
-      if (!d.running) for (const k in v.state) v.state[k] = v.state[k] === "running" ? (d.rc === 0 ? "ok" : "failed") : v.state[k] === "pending" ? "skipped" : v.state[k];
-      if (d.lines.length || !d.running) rerender();
+      for (const e of d.events || []) {
+        (v.events = v.events || []).push(e);
+        if (e.type === "step_failed") v.state[e.step] = "fixing";
+        else if (e.type === "step_fixed") v.state[e.step] = "fixed";
+        else if (e.type === "agent_start") v.agentLive = e.agent;
+        else if (e.type === "agent_end") v.agentLive = null;
+      }
+      if (!d.running) { v.agentLive = null; for (const k in v.state) v.state[k] = ["running", "fixing"].includes(v.state[k]) ? (d.rc === 0 ? "ok" : "failed") : v.state[k] === "pending" ? "skipped" : v.state[k]; }
+      if (d.lines.length || d.events?.length || !d.running) rerender();
     } else if (S.view?.kind === "log" && S.view.live === r.id) {
       S.view.text += d.lines.map((l) => l + "\n").join(""); rerender();
     }
@@ -386,18 +569,95 @@ function renderLog() {
   const v = S.view;
   const name = v.file.replace(/-\d{8}-\d{6}.*$/, "");
   const pre = h("pre", { id: "out" });
+  const isFix = v.file.startsWith("fix-");
   for (const line of v.text.split("\n")) {
-    const m = line.match(/^::wf-(step|exit) (-?\d+)$/);
-    pre.append(m ? h("span", { class: "mark" }, m[1] === "step" ? `── step ${m[2]} ──\n` : `── exit ${m[2]} ──\n`) : line + "\n");
+    const m = line.match(/^::wf-(step|exit|fixed|agent) (.*)$/);
+    if (/^(>>|<<) /.test(line)) { if (!v.hideRpc) pre.append(h("span", { class: "logline rpcline" }, (line.startsWith(">>") ? "→ " : "← ") + rpcLabel(line.slice(3)) + "\n")); continue; }
+    pre.append(m ? h("span", { class: "mark" }, `── ${m[1]} ${m[2]} ──\n`) : line + "\n");
   }
   setMain(h("div", { class: "title" }, h("h2", {}, v.file)),
-    h("div", { class: "toolbar" }, h("button", { onclick: () => { S.tab = "workflows"; remember(); renderList(); openWorkflow(name); } }, `Open workflow ${name}`), h("button", { onclick: () => copy(v.text) }, "Copy log")),
+    h("div", { class: "toolbar" }, isFix ? null : h("button", { onclick: () => { S.tab = "workflows"; remember(); renderList(); openWorkflow(name); } }, `Open workflow ${name}`), h("button", { onclick: () => copy(v.text) }, "Copy log"),
+      isFix ? h("label", {}, h("input", { type: "checkbox", checked: !!v.hideRpc, onchange: (e) => { v.hideRpc = e.target.checked; rerender(); } }), " hide ACP messages") : null),
     h("div", { class: "console" }, pre));
+}
+
+// ---------- agents (ACP)
+async function loadAgents() {
+  try { const d = await get("/api/agents"); S.agents = d.agents; S.agentConfig = d.config; } catch (e) { return; }
+  const btn = $("#agentsBtn"), live = S.agents.find((a) => a.connected), def = S.agents.find((a) => a.default);
+  const shown = live || def;
+  const color = live ? "var(--ok)" : shown?.probe ? (shown.probe.ok ? "var(--ok)" : "var(--bad)") : "var(--muted)";
+  btn.replaceChildren(h("span", { class: "dot" + (live ? " live" : ""), style: `background:${color}` }),
+    h("span", {}, shown ? `${shown.name}${live ? " · connected" : ""}` : "No agents"));
+  btn.title = live ? `${live.name} is in an ACP session (${live.connected.workflow})` : shown ? `Default agent: ${shown.name} (${shown.transport})` : "No local coding agents found";
+  const sig = JSON.stringify(S.agents.map((a) => [a.name, a.available, a.transport, !!a.connected, a.probe?.ok]));
+  const changed = sig !== S.agentSig; S.agentSig = sig;
+  // re-render only when something shown changed: a workflow page has inputs that a re-render would reset
+  if (changed && (S.view?.kind === "agents" || (S.view?.kind === "workflow" && !S.view.editing && !S.run?.running))) rerender();
+}
+async function openAgents() {
+  stopPoll(); S.view = { kind: "agents", probing: new Set() }; rerender();
+  // check native ACP agents right away (handshake only: no session, no prompt); npx ones only on request
+  for (const a of S.agents) if (a.available && a.transport === "acp" && !a.via_npx && !a.probe) probeAgent(a.name);
+}
+async function probeAgent(name) {
+  const v = S.view; v.probing?.add(name); rerender();
+  try { await post("/api/agents/probe", { name }); } catch (e) { fail(e); }
+  v.probing?.delete(name); await loadAgents();
+}
+function renderAgents() {
+  const v = S.view;
+  const cards = S.agents.map((a) => {
+    const p = a.probe, busy = v.probing.has(a.name);
+    const how = a.transport === "acp" ? h("span", { class: "pill", style: "color:var(--accent)" }, "ACP") : a.transport === "exec" ? h("span", { class: "pill", style: "color:var(--warn)" }, "exec") : h("span", { class: "pill", style: "color:var(--muted)" }, "not installed");
+    const status = a.connected ? h("span", { class: "st ok" }, "● connected") : busy ? h("span", { class: "st running" }, "connecting…") : p ? h("span", { class: "st " + (p.ok ? "ok" : "failed") }, p.ok ? (p.exec ? "installed" : "reachable") : "unreachable") : h("span", { class: "st idle" }, "not tested");
+    return h("div", { class: "card" },
+      h("div", { class: "ch" }, h("b", {}, a.name), how, a.default ? h("span", { class: "pill" }, "default") : null, h("span", { style: "margin-left:auto" }, status)),
+      h("div", { class: "kv" },
+        h("span", {}, "command"), h("span", { class: "mono" }, a.argv ? a.argv.join(" ") : (a.acp?.[0] || a.exec || ["-"]).join(" ")),
+        a.connected ? [h("span", {}, "session"), h("span", {}, `fixing a step in ${a.connected.workflow}`)] : null,
+        p?.ok && !p.exec ? [h("span", {}, "protocol"), h("span", {}, `ACP v${p.protocol} · handshake ${p.ms} ms`)] : null,
+        p?.agent_info ? [h("span", {}, "agent"), h("span", {}, `${p.agent_info.name || ""} ${p.agent_info.version || ""}`)] : null,
+        p?.capabilities?.length ? [h("span", {}, "capabilities"), h("span", {}, p.capabilities.join(", "))] : null,
+        p?.prompt?.length ? [h("span", {}, "prompt input"), h("span", {}, p.prompt.join(", "))] : null,
+        p?.auth?.length ? [h("span", {}, "login"), h("span", {}, p.auth.join(" · "))] : null,
+        p && !p.ok ? [h("span", {}, "error"), h("span", { class: "err", style: "margin:0" }, p.error)] : null,
+        p ? [h("span", {}, "checked"), h("span", {}, new Date(p.t * 1000).toLocaleTimeString())] : null),
+      a.via_npx ? h("div", { class: "meta" }, `Runs through npx (${a.npx}); the first check downloads it.`) : null,
+      a.transport === "exec" ? h("div", { class: "meta" }, "No ACP: runs one headless prompt per attempt; its edits are read from git.") : null,
+      !a.available ? h("div", { class: "meta" }, `Install ${(a.acp?.[0] || a.exec || [a.name])[0]} to use it.`) : null,
+      h("div", { class: "toolbar", style: "margin:4px 0 0" },
+        h("button", { disabled: !a.available || busy, onclick: () => probeAgent(a.name) }, a.transport === "acp" ? "Test connection" : "Check"),
+        h("button", { disabled: !a.available, onclick: () => { S.fix.agent = a.name; saveFix(); toast(`Workflows will be fixed with ${a.name}`); rerender(); } }, S.fix.agent === a.name ? "✓ used for fixing" : "Use for fixing")));
+  });
+  setMain(h("div", { class: "title" }, h("h2", {}, "Agents")),
+    h("div", { class: "sub" }, "Local coding agents that fix failing workflow steps. ACP agents (Agent Client Protocol) stream their messages, tool calls and permission requests here; “Test connection” only does the ACP handshake — no session, no prompt."),
+    h("div", { class: "toolbar" }, h("button", { onclick: () => S.agents.filter((a) => a.available).forEach((a) => probeAgent(a.name)) }, "Test all"), h("span", { class: "meta mono" }, `add or override agents in ${tilde(S.agentConfig || "")}`)),
+    h("div", { class: "cards" }, ...cards));
+}
+
+// ---------- fixes
+function openFix(f) { stopPoll(); S.view = { kind: "fix", fix: f }; rerender(); renderList(); }
+function renderFix() {
+  const f = S.view.fix;
+  const body = f.kind === "steps" ? h("pre", { class: "mono" }, f.steps.map((s) => `# ${s.description || ""}\n${s.cwd ? `cd ${s.cwd}\n` : ""}${s.command}`).map(tilde).join("\n\n"))
+    : f.kind === "command" ? h("pre", { class: "mono" }, tilde(f.retry)) : f.kind === "patch" ? h("pre", { class: "mono" }, tilde(f.patch)) : null;
+  setMain(h("div", { class: "title" }, h("h2", {}, `Fix ${f.id}`), h("span", { class: "pill", style: "color:var(--accent)" }, f.kind), h("span", { class: "meta" }, `worked ${f.wins || 0} of ${(f.wins || 0) + (f.losses || 0)}`)),
+    h("div", { class: "sub" }, `${f.origin} · ${f.source} · learned ${f.ts?.replace("T", " ")}${f.last_used ? ` · last used ${f.last_used.replace("T", " ")}` : ""}`),
+    h("div", { class: "kv", style: "grid-template-columns:110px 1fr;font-size:13px" },
+      h("span", {}, "error"), h("span", { class: "mono err", style: "margin:0" }, f.error || "-"),
+      h("span", {}, "failing command"), h("span", { class: "mono" }, tilde(f.command)),
+      h("span", {}, "directory"), h("span", { class: "mono" }, tilde(f.cwd || "-"))),
+    f.summary ? h("div", { style: "margin-top:12px" }, h("b", {}, "Agent's summary"), h("div", { class: "say", style: "white-space:pre-wrap" }, f.summary)) : null,
+    body ? h("div", { style: "margin-top:12px" }, h("b", {}, { steps: "Steps that fixed it", command: "Working command", patch: "Change" }[f.kind]), h("div", { class: "console" }, body)) : null,
+    h("div", { class: "toolbar", style: "margin-top:12px" },
+      body ? h("button", { onclick: () => copy(f.kind === "patch" ? f.patch : f.kind === "command" ? f.retry : f.steps.map((s) => s.command).join("\n")) }, "Copy") : null,
+      h("button", { class: "danger", onclick: async () => { try { await post("/api/fixes/forget", { project: S.project, id: f.id }); toast("Forgotten"); S.view = null; renderList(); setMain(h("div", { class: "empty" }, "Fix forgotten.")); } catch (e) { fail(e); } } }, "Forget this fix")));
 }
 
 function rerender() {
   if (!S.view) return;
-  ({ session: renderSession, search: renderSearch, workflow: renderWorkflow, log: renderLog })[S.view.kind]();
+  ({ session: renderSession, search: renderSearch, workflow: renderWorkflow, log: renderLog, agents: renderAgents, fix: renderFix })[S.view.kind]();
 }
 
 // ---------- wiring
@@ -405,7 +665,9 @@ document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("cli
 $("#project").addEventListener("change", (e) => { S.project = e.target.value; S.view = null; S.sel.clear(); S.cats.clear(); remember(); renderList(); });
 let qT; $("#q").addEventListener("input", (e) => { clearTimeout(qT); qT = setTimeout(() => runSearch(e.target.value.trim()), 250); });
 $("#store").replaceChildren(h("bdi", { dir: "ltr" }, tilde("__WF_ROOT__")));
+$("#agentsBtn").addEventListener("click", openAgents);
 loadProjects().catch(fail);
+loadAgents(); setInterval(loadAgents, 4000);
 </script>
 </body>
 </html>

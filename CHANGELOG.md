@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Fix memory: failure → fix pairs are learned from sessions (live by the hook, or `wf learn`) into
+  `fixes.jsonl`, with wins/losses. A failing step in Claude Code whose error matches a known fix gets it as
+  hook context.
+- `wf fix` (`--last`, `--cmd`) and `wf run --fix`: try remembered fixes (applied, then verified by rerunning),
+  then a local coding agent over the Agent Client Protocol: Claude (`claude-agent-acp`), Codex (`codex-acp`),
+  Antigravity (`agy acp`), Gemini (`--experimental-acp`); `muse` and others via one-shot exec. Agent writes go
+  through `wf` (project only, no sensitive files); permissions are asked on the terminal or approved with `--yes`
+  (never for dangerous commands). Verified agent changes are learned as patches. `wf agents`, `wf fixes`,
+  `~/workflows/agents.json` for custom agents.
+- Workflows app: "Fix failing steps" with an agent picker and in-app Allow / Always / Deny for agent permission
+  requests; run console tabs Output / Agent feed / ACP debug; Agents view with ACP handshake tests and a live
+  "connected" badge; Fixes tab. The app drives `wf run --fix --ui-events` (events and answers over stdio).
+- MCP: `find_fixes`, `record_fix`, `fix_outcome`, so any MCP client can use the fix memory and add to it.
+
 - Tool calls are recorded with their full parameters: each step in `sessions/NNNN.jsonl` carries a
   structured `params` object (nested MCP/agent arguments included). Secrets are redacted, anything under a
   secret-named key is redacted whole, strings over 2000 chars are capped, and when any path at any depth

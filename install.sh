@@ -37,7 +37,7 @@ command -v jq >/dev/null || { echo "jq is required (brew install jq / apt instal
 
 say "Installing skill -> $SKILL_DIR"
 mkdir -p "$SKILL_DIR/app"
-cp "$HERE/skill/SKILL.md" "$HERE/skill/wf.py" "$HERE/skill/wf_mcp.py" "$SKILL_DIR/"
+cp "$HERE/skill/SKILL.md" "$HERE/skill/wf.py" "$HERE/skill/wf_mcp.py" "$HERE/skill/wf_fix.py" "$HERE/skill/wf_acp.py" "$SKILL_DIR/"
 cp "$HERE/skill/app/server.py" "$HERE/skill/app/index.html" "$SKILL_DIR/app/"
 chmod +x "$SKILL_DIR/wf.py" "$SKILL_DIR/wf_mcp.py" "$SKILL_DIR/app/server.py"
 # Pin the interpreter so `wf` works regardless of venvs on PATH.
@@ -91,6 +91,12 @@ fi
 if [ "$DO_APP" = 1 ] && [ "$(uname)" = Darwin ]; then
   say "Building Workflows.app -> $HOME/Applications"
   "$HERE/macos/build-app.sh" "$HOME/Applications/Workflows.app"
+fi
+
+# A viewer server started before this install keeps serving the old code (the app launcher reuses any
+# server that answers /health), so stop it; the next `wf ui` / Workflows.app launch starts the new one.
+if pkill -f "$SKILL_DIR/app/server.py" 2>/dev/null; then
+  say "Stopped the running Workflows server - reopen the app (wf ui) to load the new version"
 fi
 
 say "Done. Start a new Claude Code session - it will announce 'Session #0001'. Then try: wf list | wf ui"

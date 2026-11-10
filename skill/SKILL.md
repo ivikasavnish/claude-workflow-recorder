@@ -96,10 +96,42 @@ environment (HOME, PATH, USER, TERM, LANG, JAVA_HOME, ANDROID_HOME/SDK_ROOT). Pa
 6. `wf run <name> --dry-run`, then offer to `wf run <name>`.
 7. If the user wants it in the repo, copy it (e.g. `scripts/workflows/<name>.sh`) — don't move it.
 
+## Fix memory and local agents (`wf fix`)
+
+The recorder learns **failure → fix** pairs: when a step fails and the same command passes a few steps later,
+the steps in between (edits, installs, config changes — not reads or test reruns) are saved as a fix in
+`~/workflows/<project>/fixes.jsonl`. If only the command changed, the new command is saved. Each fix
+tracks wins/losses, and fixes that keep failing are retired.
+
+- **In a session**: when a command fails with an error that matches a known fix, the hook adds it to your
+  context ("This error matches fixes that worked before…"). Check it applies, then use it. Once a fix of
+  your own works, the hook learns it automatically.
+- **`wf fix`** makes a failing command pass. It tries remembered fixes first (applied, then verified by
+  rerunning), then a local coding agent over **ACP** (Agent Client Protocol), which gets the best related
+  past fixes from every project in its prompt. Only a change that makes the command pass is learned (as a patch).
+- **Agents** (`wf agents`): `claude` (claude-agent-acp), `codex` (codex-acp), `antigravity` (`agy acp`),
+  `gemini` (`--experimental-acp`) over ACP; `muse` (MSP, not ACP) through a one-shot `muse exec`. Add or override
+  agents in `~/workflows/agents.json`.
+
+```bash
+wf fix --last                      # rerun the session's last failed step and fix it
+wf fix --cmd "npm test" [--agent codex|antigravity|none] [--yes] [--attempts 2]
+wf run release --fix [--agent ...] # on a failing step: fix, then continue
+wf fixes [--all] | wf fixes show <id> | wf fixes forget <id>
+wf learn [SEL...]                  # (re)learn from recorded sessions (default all; idempotent)
+wf agents
+```
+
+Remembered fixes and agent tool calls are confirmed on the terminal unless `--yes` is passed. Even with `--yes`,
+commands flagged dangerous are refused. Agent writes go through `wf`, which limits them to the project and
+blocks sensitive files. Never pass `--yes` on the user's behalf for an agent run without asking.
+Turn off live learning and hints with `WF_FIX_MEMORY=0`.
+
 ## MCP access (for Claude and other tools)
 
 - `wf_mcp.py` — stdio MCP server over `~/workflows`: `list_projects`, `list_sessions`, `search_steps`,
-  `get_steps`, `list_workflows`, `get_workflow`, `extract_workflow`. Returns only matching steps.
+  `get_steps`, `list_workflows`, `get_workflow`, `extract_workflow`, and fix memory: `find_fixes`, `record_fix`,
+  `fix_outcome` (record only fixes you verified). Returns only matching steps.
   Any client can register it directly: `/usr/bin/python3 ~/.claude/skills/workflow-recorder/wf_mcp.py`.
 - In Claude Code it sits behind the **router** (`~/mcp-router/`), which exposes only `search_tools`,
   `call_tool`, `list_servers`, `refresh_index`. To use past commands: `search_tools("past gradle test commands")`
@@ -114,6 +146,13 @@ as a Chrome app window. The server stays running in the background; stop it with
 - **Workflows**: **Run all**, **Run selected**, or **▶ Run** a single step. Each step runs in its recorded
   directory, so any subset works on its own. Live output, per-step OK / FAILED / SKIPPED, Stop button,
   extra env vars, in-place script editor.
-- **Runs**: every run log (app and CLI), with exit status.
+- **Fix failing steps** (workflow page): pick an agent (or "fix memory only") and run. A failing step tries
+  remembered fixes, then the agent; its permission requests appear as **Allow / Always / Deny** cards. The run
+  console has **Output**, **Agent feed** (messages, tool calls, plan, fixes tried, verification, the learned
+  change) and **ACP debug** (every JSON-RPC message, filterable, click to expand).
+- **Agents** (header badge): each agent's transport and command, a "Test connection" ACP handshake (protocol
+  version, capabilities, login methods), and a live "connected" dot while an agent session is running.
+- **Fixes**: the fix memory with wins/losses, the error, the steps/patch, and Forget.
+- **Runs**: every run log (app and CLI), with exit status, plus `fix-*.log` agent transcripts.
 CLI equivalent: `wf run <name> [--steps 3 | 2-5,8] [--dry-run]`.
 Security: binds 127.0.0.1 only, checks Host header, POSTs need a per-launch token embedded in the page.

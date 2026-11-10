@@ -172,6 +172,36 @@ def t_extract_workflow(a):
     return t_get_workflow({"project": p.name, "name": a["name"]})
 
 
+def t_find_fixes(a):
+    import wf_fix
+    p = project(a.get("project")) if a.get("project") or projects() else None
+    hits = wf_fix.lookup(a.get("command", ""), a["error"], p, limit=int(a.get("limit", 5)))
+    return [{"score": s, "project": home.name, **{k: fx.get(k) for k in
+             ("id", "kind", "origin", "source", "error", "command", "steps", "retry", "patch", "summary", "wins", "losses")}}
+            for s, home, fx in hits]
+
+
+def t_record_fix(a):
+    """Lets any agent teach the memory. Only call it after the command was verified to pass."""
+    import wf_fix
+    p = project(a.get("project"))
+    steps = [{"cwd": a.get("cwd", ""), "command": c, "description": ""} for c in a.get("steps") or []]
+    kind = "patch" if a.get("patch") else "steps" if steps else "hint"
+    e = wf_fix.entry(p, f"mcp:{a.get('agent') or 'agent'}", wf.now(), a["command"], a.get("cwd", ""), a["error"], kind,
+                     steps=steps, patch=a.get("patch", ""), summary=wf.redact(a.get("summary", ""))[:1500])
+    fid, new = wf_fix.upsert(p, e)
+    return {"id": fid, "kind": kind, "new": new}
+
+
+def t_fix_outcome(a):
+    import wf_fix
+    p = project(a.get("project"))
+    fx = wf_fix.outcome(p, a["id"], bool(a["worked"]))
+    if not fx:
+        raise ValueError(f"no fix {a['id']} in {p.name}")
+    return {"id": fx["id"], "wins": fx.get("wins", 0), "losses": fx.get("losses", 0)}
+
+
 P = {"type": "string", "description": "Project name (folder in ~/workflows). Default: most recently active."}
 TOOLS = [
     ("list_projects", t_list_projects, "List recorded projects with session counts and saved workflow names.", {}, []),
@@ -198,6 +228,22 @@ TOOLS = [
       "safe_only": {"type": "boolean", "description": "Drop steps flagged dangerous"},
       "auto_params": {"type": "boolean", "description": "Turn the project path into {{PROJECT_DIR}}"},
       "params": {"type": "array", "items": {"type": "string"}, "description": "NAME=VALUE: replace VALUE with {{NAME}}"}}, ["name", "sources"]),
+    ("find_fixes", t_find_fixes,
+     "Look up fixes that worked before for an error (local fix memory, all projects, best first). Each has a kind: "
+     "'steps' (commands that fixed it), 'command' (a working replacement command), 'patch' (a diff) or 'hint' (a note), "
+     "and wins/losses. Call this first when a command fails.",
+     {"error": {"type": "string", "description": "Error output (the last lines are enough)"},
+      "command": {"type": "string", "description": "The failing command"}, "project": P,
+      "limit": {"type": "integer", "default": 5}}, ["error"]),
+    ("record_fix", t_record_fix,
+     "Teach the fix memory a fix, after you have verified the command now passes. Give steps (commands) or a patch "
+     "(unified diff, a/ b/ paths from the project root) plus a short summary of the root cause.",
+     {"command": {"type": "string"}, "error": {"type": "string"}, "cwd": {"type": "string"}, "project": P,
+      "steps": {"type": "array", "items": {"type": "string"}}, "patch": {"type": "string"},
+      "summary": {"type": "string"}, "agent": {"type": "string", "description": "Your name, e.g. codex"}},
+     ["command", "error"]),
+    ("fix_outcome", t_fix_outcome, "Report whether a fix from find_fixes worked, so the memory ranks it.",
+     {"id": {"type": "string"}, "worked": {"type": "boolean"}, "project": P}, ["id", "worked"]),
 ]
 BY_NAME = {t[0]: t for t in TOOLS}
 
