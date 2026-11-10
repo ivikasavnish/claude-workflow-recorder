@@ -23,6 +23,18 @@ import threading
 import time
 from pathlib import Path
 
+
+def claim_stdout():
+    """Keep the real stdout for JSON-RPC only and point fd 1 / sys.stdout at stderr, so a stray print in this
+    process (or a child process that inherits fd 1) logs instead of breaking the client."""
+    proto = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    return proto
+
+
+PROTO_OUT = claim_stdout() if __name__ == "__main__" else sys.stdout
+
 HERE = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("MCP_ROUTER_CONFIG", HERE / "servers.json"))
 INDEX = CONFIG.parent / "index.json"  # tool-list cache lives next to its config
@@ -261,8 +273,8 @@ def call(name, a):
 
 def send(msg, lock=threading.Lock()):
     with lock:
-        sys.stdout.write(json.dumps(msg) + "\n")
-        sys.stdout.flush()
+        PROTO_OUT.write(json.dumps(msg) + "\n")
+        PROTO_OUT.flush()
 
 
 def serve(req):

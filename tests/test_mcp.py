@@ -74,6 +74,43 @@ class TestWorkflowsServer(Base):
             c.close()
 
 
+class TestStdoutGuard(Base):
+    """A stray print — from Python or from a child process inheriting fd 1 — must not reach the JSON-RPC stream."""
+    NOISY = ("import os, runpy, sys; sys.path.insert(0, {skill!r}); import wf; orig = wf.assess\n"
+             "def noisy(cmd):\n"
+             "    print('stray print from wf.assess'); os.system('echo stray output from a child process')\n"
+             "    return orig(cmd)\n"
+             "wf.assess = noisy; runpy.run_path({server!r}, run_name='__main__')\n")
+
+    def test_stray_output_goes_to_stderr(self):
+        script = self.NOISY.format(skill=str(ROOT / "skill"), server=str(ROOT / "skill" / "wf_mcp.py"))
+        c = Client([sys.executable, "-c", script], self.env)  # Client.rpc json-parses every stdout line
+        try:
+            res, err = c.call("search_steps", {"query": "logcat crash"})
+            self.assertFalse(err)
+            self.assertEqual(res["matches"][0]["ref"], "proj#1:2")
+        finally:
+            c.close()
+
+    def test_router_stray_output_goes_to_stderr(self):
+        # run the real entry point, with a print injected into tools/list
+        script = ("import os\n"
+                  "src = open({router!r}).read().replace('res = {{\"tools\": router_tools()}}',\n"
+                  "    'print(\"stray print\"); os.system(\"echo stray child\"); res = {{\"tools\": router_tools()}}')\n"
+                  "assert 'stray print' in src\n"
+                  "exec(compile(src, {router!r}, 'exec'), {{'__name__': '__main__', '__file__': {router!r}}})\n"
+                  ).format(router=str(ROOT / "router" / "router.py"))
+        cfg = Path(self.tmp.name) / "router" / "servers.json"
+        cfg.parent.mkdir()
+        cfg.write_text(json.dumps({"servers": {}}))
+        c = Client([sys.executable, "-c", script], {**self.env, "MCP_ROUTER_CONFIG": str(cfg)})
+        try:
+            names = sorted(t["name"] for t in c.rpc("tools/list", {})["tools"])
+            self.assertIn("search_tools", names)
+        finally:
+            c.close()
+
+
 class TestRouter(Base):
     def test_router_only_exposes_search_and_proxies(self):
         cfg = Path(self.tmp.name) / "router" / "servers.json"

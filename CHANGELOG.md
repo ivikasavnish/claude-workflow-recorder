@@ -15,6 +15,8 @@
   requests; run console tabs Output / Agent feed / ACP debug; Agents view with ACP handshake tests and a live
   "connected" badge; Fixes tab. The app drives `wf run --fix --ui-events` (events and answers over stdio).
 - MCP: `find_fixes`, `record_fix`, `fix_outcome`, so any MCP client can use the fix memory and add to it.
+- The MCP server and the router keep stdout for JSON-RPC only: at startup fd 1 and `sys.stdout` are pointed at
+  stderr, so a stray print (in our code, imported code, or a child process) is logged instead of breaking the client.
 
 - Tool calls are recorded with their full parameters: each step in `sessions/NNNN.jsonl` carries a
   structured `params` object (nested MCP/agent arguments included). Secrets are redacted, anything under a

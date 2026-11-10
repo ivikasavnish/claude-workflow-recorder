@@ -13,6 +13,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def claim_stdout():
+    """Keep the real stdout for JSON-RPC only and point fd 1 / sys.stdout at stderr, so a stray print in this
+    process (or in imported code, or a child process that inherits fd 1) logs instead of breaking the client."""
+    proto = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    return proto
+
+
+PROTO_OUT = claim_stdout() if __name__ == "__main__" else sys.stdout
+
 ROOT = Path(os.environ.get("WF_HOME", Path.home() / "workflows"))
 WF = Path(__file__).with_name("wf.py")
 sys.path.insert(0, str(WF.parent))
@@ -251,8 +263,8 @@ BY_NAME = {t[0]: t for t in TOOLS}
 # ---------------------------------------------------------------- stdio JSON-RPC
 
 def send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    PROTO_OUT.write(json.dumps(msg) + "\n")
+    PROTO_OUT.flush()
 
 
 def handle(req):
